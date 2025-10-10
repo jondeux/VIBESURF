@@ -1,0 +1,168 @@
+# Use Python 3.12-slim as specified in the VibeSurf install commands
+FROM python:3.12-slim
+
+# HF SPACES STANDARD: Set environment variables for containerized execution
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH \
+    PLAYWRIGHT_BROWSERS_PATH=/home/user/.cache/ms-playwright \
+    DISPLAY=:99
+
+# SYSTEM DEPENDENCIES: Install uv, git, Playwright browser deps, Xvfb as root
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git \
+        wget \
+        curl \
+        gnupg \
+        ca-certificates \
+        xvfb \
+        # Playwright browser dependencies (installed as root to avoid non-root issues)
+        libnss3 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libcups2 \
+        libdrm2 \
+        libxrandr2 \
+        libxfixes3 \
+        libxcomposite1 \
+        libasound2 \
+        libxdamage1 \
+        libxrender1 \
+        libgbm1 \
+        fonts-liberation \
+        libxss1 \
+        libxtst6 \
+        libpangocairo-1.0-0 \
+        libcairo-gobject2 \
+        libgtk-3-0 \
+        libgdk-pixbuf-2.0-0 \
+        # Additional dependencies for stability
+        libdbus-1-3 \
+        libx11-xcb1 \
+        libxcursor1 \
+        libxi6 \
+        libfontconfig1 \
+        libxkbcommon0 && \
+    # Clean up apt cache to reduce image size
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+
+# Install uv for Python environment management as root
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    uv --version
+
+# HF SPACES STANDARD: Create non-root user with UID 1000
+RUN useradd -m -u 1000 user && \
+    mkdir -p /home/user/app /home/user/.vibesurf /tmp/.X11-unix && \
+    chown -R user:user /home/user && \
+    chown root:root /tmp/.X11-unix && \
+    chmod 1777 /tmp/.X11-unix
+
+# Set working directory to HF Spaces standard
+WORKDIR /home/user/app
+
+# Switch to non-root user
+USER user
+
+# SOURCE CODE: Clone VibeSurf repository
+RUN git clone https://github.com/vvincent1234/VibeSurf.git .
+
+# PORT CONFIGURATION: Patch default port from 9335 to 7860 in source code
+RUN find . -type f \( -name "*.py" -o -name "*.js" -o -name "*.json" \) -exec sed -i 's/9335/7860/g' {} + 2>/dev/null || true
+
+# Copy sample .env
+COPY --chown=1000:1000 .env .
+
+# Create necessary directories with proper permissions
+RUN mkdir -p tmp logs /home/user/.vibesurf && \
+    chmod -R 775 tmp logs /home/user/.vibesurf
+
+# Create and activate virtual environment with uv
+RUN uv venv --python 3.12 .venv && \
+    . .venv/bin/activate && \
+    uv pip install vibesurf -U && \
+    uv pip install uvicorn
+
+# Install Playwright and Chromium (without --with-deps since system deps are pre-installed)
+RUN . .venv/bin/activate && \
+    uv pip install playwright && \
+    playwright install chromium
+
+# FILE EMBEDDING: Create startup script with error handling, Xvfb, and browser selection workaround
+RUN cat > start.sh <<'EOF'
+#!/bin/bash
+set -e
+
+echo "=== VibeSurf Startup ==="
+echo "Python version: $(python --version)"
+echo "Current directory: $(pwd)"
+echo "Available files:"
+ls -la
+echo "Environment variables:"
+env | grep -E 'OPENAI_API_KEY|PLAYWRIGHT|DISPLAY|SPACE'
+echo "Permissions for chrome_extension:"
+ls -ld .venv/lib/python3.12/site-packages/vibe_surf/chrome_extension || true
+
+# Validate required files
+if [ ! -f ".venv/bin/vibesurf" ]; then
+    echo "Error: vibesurf executable not found!"
+    exit 1
+fi
+
+# Validate required environment variables
+required_vars=("OPENAI_API_KEY")
+missing_vars=()
+for var in "${required_vars[@]}"; do
+    if [ -z "${!var}" ]; then
+        missing_vars+=("$var")
+    fi
+done
+if [ ${#missing_vars[@]} -ne 0 ]; then
+    echo "ERROR: Missing required environment variables: ${missing_vars[*]}"
+    echo "Please set these variables in HuggingFace Spaces settings as secrets"
+    exit 1
+fi
+
+# Validate workspace directory
+if [ ! -d "/home/user/.vibesurf" ]; then
+    echo "Error: Workspace directory /home/user/.vibesurf not found!"
+    exit 1
+fi
+
+# Start Xvfb for headless display
+echo "Starting Xvfb on DISPLAY=:99..."
+Xvfb :99 -screen 0 1024x768x24 &
+
+# Wait for Xvfb to start
+sleep 2
+echo "Xvfb status:"
+ps aux | grep Xvfb || true
+
+# Activate virtual environment
+. .venv/bin/activate
+
+# Run vibesurf CLI non-interactively to initialize and start backend
+echo "Initializing and starting VibeSurf on port 7860..."
+echo "1" | vibesurf || {
+    echo "Error: vibesurf CLI execution failed. Check logs in /home/user/.vibesurf/logs for details."
+    exit 1
+}
+EOF
+
+# Set permissions for startup script
+RUN chmod +x start.sh
+
+# HF SPACES STANDARD: Expose port 7860
+EXPOSE 7860
+
+# HF SPACES STANDARD: Health check to verify application is running
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:7860 || exit 1
+
+# Start the application
+CMD ["./start.sh"]
