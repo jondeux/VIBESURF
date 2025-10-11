@@ -1,0 +1,259 @@
+# VIBESURF WEB ENHANCED: Complete Production Dockerfile with ALL Features
+# Includes: File Upload, History, Detailed Status, LLM Selector, Browser Tabs, Settings
+# Python 3.12-slim base for optimal AI application compatibility
+FROM python:3.12-slim
+
+# HF SPACES STANDARD: Environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANGUAGE=en_US:en \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8
+
+# VIBESURF CONFIG
+ENV VIBESURF_BACKEND_PORT=7860 \
+    BROWSER_USE_LOGGING_LEVEL=info \
+    ANONYMIZED_TELEMETRY=false \
+    IN_DOCKER=true \
+    BROWSER_USE_CALCULATE_COST=false \
+    VIBESURF_DEBUG=false \
+    DISPLAY=:99 \
+    DBUS_SESSION_BUS_ADDRESS=autolaunch: \
+    CHROME_BIN=/usr/bin/chromium \
+    CHROME_PATH=/usr/bin/chromium \
+    CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu"
+
+# SYSTEM DEPENDENCIES
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git wget curl gnupg ca-certificates unzip build-essential pkg-config \
+    xvfb x11vnc dbus-x11 xauth chromium chromium-driver \
+    fonts-liberation fonts-dejavu-core fonts-freefont-ttf fonts-noto-core fonts-noto-color-emoji \
+    fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg \
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxrandr2 libxfixes3 \
+    libxcomposite1 libasound2 libxdamage1 libxrender1 libgbm1 libxss1 libxtst6 \
+    libpangocairo-1.0-0 libcairo-gobject2 libgtk-3-0 libgdk-pixbuf-2.0-0 libdbus-1-3 \
+    libx11-xcb1 libxcursor1 libxi6 libfontconfig1 libxkbcommon0 procps htop \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
+
+# HF SPACES USER
+RUN if ! id -u 1000 >/dev/null 2>&1; then useradd -m -u 1000 user; fi
+
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.venv/bin:/home/user/.local/bin:$PATH
+WORKDIR $HOME/app
+
+# COPY UV
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uvx /usr/local/bin/uvx
+
+# CLONE REPOSITORY
+RUN git clone https://github.com/vvincent1234/VibeSurf.git . && \
+    echo "VibeSurf repository cloned successfully"
+
+# CREATE DIRECTORIES
+RUN mkdir -p $HOME/app/data/profiles $HOME/app/data/workspace $HOME/app/data/database \
+             $HOME/app/logs $HOME/app/tmp $HOME/app/web_ui $HOME/.config/vibesurf $HOME/.config/chromium && \
+    chmod -R 777 $HOME/app/data $HOME/app/logs $HOME/app/tmp $HOME/app/web_ui $HOME/.config
+
+# INSTALL DEPENDENCIES
+RUN uv venv --seed $HOME/.venv && \
+    /usr/local/bin/uv pip install --python $HOME/.venv/bin/python --no-cache -e . && \
+    echo "VibeSurf dependencies installed successfully"
+
+# CREATE ENV FILE
+RUN cp .env.example .env && echo "Default environment file created"
+
+# ENHANCED WEB UI - HTML (Part 1 of 3)
+RUN mkdir -p $HOME/app/web_ui && cat > $HOME/app/web_ui/index.html <<'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VibeSurf Pro - Enhanced AI Browser Automation</title>
+    <link rel="stylesheet" href="/web_ui/style.css">
+</head>
+<body>
+    <nav class="nav-tabs">
+        <button class="tab-btn active" data-tab="tasks">🎯 Tasks</button>
+        <button class="tab-btn" data-tab="history">📜 History</button>
+        <button class="tab-btn" data-tab="browser">🌐 Browser</button>
+        <button class="tab-btn" data-tab="settings">⚙️ Settings</button>
+    </nav>
+
+    <div class="container">
+        <header>
+            <h1>🌊 VibeSurf Pro</h1>
+            <p>Enhanced AI Browser Automation</p>
+            <div class="status" id="status">
+                <span class="status-indicator" id="status-indicator"></span>
+                <span id="status-text">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- TASKS TAB -->
+        <div id="tab-tasks" class="tab-content active">
+            <section class="task-input">
+                <h2>Submit New Task</h2>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="llm-profile-select">LLM Profile:</label>
+                        <select id="llm-profile-select" class="form-control">
+                            <option value="default">Loading...</option>
+                        </select>
+                        <button onclick="refreshLLMProfiles()" class="btn-icon" title="Refresh">🔄</button>
+                    </div>
+                    <div class="form-group">
+                        <label for="agent-mode-select">Agent Mode:</label>
+                        <select id="agent-mode-select" class="form-control">
+                            <option value="thinking">Thinking</option>
+                            <option value="no-thinking">No Thinking</option>
+                            <option value="flash">Flash</option>
+                        </select>
+                    </div>
+                </div>
+
+                <textarea id="task-input" placeholder="Enter your task..." rows="4"></textarea>
+                
+                <div class="file-upload">
+                    <input type="file" id="file-input" multiple>
+                    <button onclick="uploadFiles()" class="btn-secondary" id="upload-btn">📎 Upload Files</button>
+                    <div id="uploaded-files-list"></div>
+                </div>
+
+                <div class="controls">
+                    <button id="submit-btn" class="btn-primary" onclick="submitTask()">▶️ Submit Task</button>
+                    <button id="pause-btn" class="btn-secondary" onclick="pauseTask()" disabled>⏸️ Pause</button>
+                    <button id="resume-btn" class="btn-secondary" onclick="resumeTask()" disabled>▶️ Resume</button>
+                    <button id="stop-btn" class="btn-danger" onclick="stopTask()" disabled>⏹️ Stop</button>
+                </div>
+            </section>
+
+            <section class="task-status">
+                <h2>Task Status</h2>
+                <div id="detailed-status" class="status-container">
+                    <p class="placeholder">No active task</p>
+                </div>
+            </section>
+
+            <section class="results">
+                <h2>Activity Log</h2>
+                <div id="activity-log" class="log-container"></div>
+            </section>
+
+            <section class="results">
+                <h2>Results</h2>
+                <div id="results" class="results-container"></div>
+            </section>
+        </div>
+
+        <!-- HISTORY TAB -->
+        <div id="tab-history" class="tab-content">
+            <section>
+                <h2>Task History</h2>
+                <div class="history-filters">
+                    <select id="session-filter" class="form-control" onchange="filterHistory()">
+                        <option value="current">Current Session</option>
+                        <option value="all">All Sessions</option>
+                    </select>
+                    <button onclick="loadHistory()" class="btn-secondary">🔄 Refresh</button>
+                </div>
+                <div id="history-list" class="history-container"></div>
+            </section>
+        </div>
+
+        <!-- BROWSER TAB -->
+        <div id="tab-browser" class="tab-content">
+            <section>
+                <h2>Browser Control</h2>
+                <div class="browser-controls">
+                    <button onclick="refreshBrowserTabs()" class="btn-primary">🔄 Refresh Tabs</button>
+                    <button onclick="getActiveTab()" class="btn-secondary">📍 Show Active Tab</button>
+                </div>
+                <div id="browser-tabs" class="browser-tabs-container"></div>
+            </section>
+        </div>
+
+        <!-- SETTINGS TAB -->
+        <div id="tab-settings" class="tab-content">
+            <section>
+                <h2>Settings</h2>
+                
+                <div class="settings-section">
+                    <h3>LLM Profiles</h3>
+                    <div id="llm-profiles-list"></div>
+                    <button onclick="showCreateProfileModal()" class="btn-primary">➕ Create Profile</button>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Providers & Models</h3>
+                    <div id="providers-list"></div>
+                    <button onclick="loadProviders()" class="btn-secondary">🔄 Load Providers</button>
+                </div>
+
+                <div class="settings-section">
+                    <h3>About</h3>
+                    <p><strong>VibeSurf Pro</strong> - Enhanced Web UI v2.0</p>
+                    <p>Features: File Upload, History, Detailed Status, LLM Selector, Browser Control, Settings</p>
+                    <a href="/docs" target="_blank" class="btn-secondary">📚 API Documentation</a>
+                </div>
+            </section>
+        </div>
+
+        <footer>
+            <p>VibeSurf Pro v2.0 | <a href="/docs" target="_blank">API Docs</a> | <a href="https://github.com/vibesurf-ai/VibeSurf" target="_blank">GitHub</a></p>
+        </footer>
+    </div>
+
+    <!-- MODAL: Create LLM Profile -->
+    <div id="create-profile-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeCreateProfileModal()">&times;</span>
+            <h2>Create LLM Profile</h2>
+            <form id="create-profile-form" onsubmit="createLLMProfile(event)">
+                <div class="form-group">
+                    <label>Profile Name:</label>
+                    <input type="text" id="profile-name" required placeholder="e.g., my-gpt4">
+                </div>
+                <div class="form-group">
+                    <label>Provider:</label>
+                    <select id="profile-provider" onchange="loadProviderModels()" required>
+                        <option value="">Select Provider</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Model:</label>
+                    <select id="profile-model" required>
+                        <option value="">Select Model</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>API Key (optional):</label>
+                    <input type="password" id="profile-api-key" placeholder="Leave empty to use env var">
+                </div>
+                <button type="submit" class="btn-primary">Create Profile</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: Task Details -->
+    <div id="task-details-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeTaskDetailsModal()">&times;</span>
+            <h2>Task Details</h2>
+            <div id="task-details-content"></div>
+        </div>
+    </div>
+
+    <script src="/web_ui/app.js"></script>
+</body>
+</html>
+HTMLEOF
+
+# The file continues in the next RUN command due to size

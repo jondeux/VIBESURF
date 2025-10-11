@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VibeSurf Pro - Enhanced AI Browser Automation</title>
+    <link rel="stylesheet" href="/web_ui/style.css">
+</head>
+<body>
+    <!-- Tab Navigation -->
+    <nav class="nav-tabs">
+        <button class="tab-btn active" data-tab="tasks">🎯 Tasks</button>
+        <button class="tab-btn" data-tab="history">📜 History</button>
+        <button class="tab-btn" data-tab="browser">🌐 Browser</button>
+        <button class="tab-btn" data-tab="settings">⚙️ Settings</button>
+    </nav>
+
+    <div class="container">
+        <header>
+            <h1>🌊 VibeSurf Pro</h1>
+            <p>Enhanced AI Browser Automation with Full Control</p>
+            <div class="status" id="status">
+                <span class="status-indicator" id="status-indicator"></span>
+                <span id="status-text">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- TASKS TAB -->
+        <div id="tab-tasks" class="tab-content active">
+            <section class="task-input">
+                <h2>Submit New Task</h2>
+                
+                <!-- Feature 4: LLM Profile Selector -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="llm-profile-select">LLM Profile:</label>
+                        <div class="input-with-button">
+                            <select id="llm-profile-select" class="form-control">
+                                <option value="default">Loading...</option>
+                            </select>
+                            <button onclick="refreshLLMProfiles()" class="btn-icon" title="Refresh Profiles">🔄</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="agent-mode-select">Agent Mode:</label>
+                        <select id="agent-mode-select" class="form-control">
+                            <option value="thinking">Thinking (Detailed reasoning)</option>
+                            <option value="no-thinking">No Thinking (Fast)</option>
+                            <option value="flash">Flash (Ultra fast)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <textarea 
+                    id="task-input" 
+                    placeholder="Enter your task here... (e.g., 'Search for latest AI news and summarize')"
+                    rows="4"
+                ></textarea>
+                
+                <!-- Feature 1: File Upload -->
+                <div class="file-upload">
+                    <input type="file" id="file-input" multiple>
+                    <button onclick="uploadFiles()" class="btn-secondary" id="upload-btn">
+                        📎 Upload Files
+                    </button>
+                    <div id="uploaded-files-list"></div>
+                </div>
+
+                <div class="controls">
+                    <button id="submit-btn" class="btn-primary" onclick="submitTask()">
+                        ▶️ Submit Task
+                    </button>
+                    <button id="pause-btn" class="btn-secondary" onclick="pauseTask()" disabled>
+                        ⏸️ Pause
+                    </button>
+                    <button id="resume-btn" class="btn-secondary" onclick="resumeTask()" disabled>
+                        ▶️ Resume
+                    </button>
+                    <button id="stop-btn" class="btn-danger" onclick="stopTask()" disabled>
+                        ⏹️ Stop
+                    </button>
+                </div>
+            </section>
+
+            <!-- Feature 3: Detailed Status -->
+            <section class="task-status">
+                <h2>Task Status</h2>
+                <div id="detailed-status" class="status-container">
+                    <p class="placeholder">No active task</p>
+                </div>
+            </section>
+
+            <section class="results">
+                <h2>Activity Log</h2>
+                <div id="activity-log" class="log-container"></div>
+            </section>
+
+            <section class="results">
+                <h2>Results</h2>
+                <div id="results" class="results-container"></div>
+            </section>
+        </div>
+
+        <!-- Feature 2: HISTORY TAB -->
+        <div id="tab-history" class="tab-content">
+            <section>
+                <h2>Task History</h2>
+                <div class="history-filters">
+                    <select id="session-filter" class="form-control" onchange="filterHistory()">
+                        <option value="current">Current Session</option>
+                        <option value="all">All Sessions</option>
+                    </select>
+                    <button onclick="loadHistory()" class="btn-secondary">🔄 Refresh</button>
+                    <span id="history-count" class="info-badge">0 tasks</span>
+                </div>
+                <div id="history-list" class="history-container"></div>
+            </section>
+        </div>
+
+        <!-- Feature 5: BROWSER TAB -->
+        <div id="tab-browser" class="tab-content">
+            <section>
+                <h2>Browser Control</h2>
+                <div class="browser-controls">
+                    <button onclick="refreshBrowserTabs()" class="btn-primary">🔄 Refresh Tabs</button>
+                    <button onclick="getActiveTab()" class="btn-secondary">📍 Show Active Tab</button>
+                    <span id="tabs-count" class="info-badge">0 tabs</span>
+                </div>
+                <div id="browser-tabs" class="browser-tabs-container"></div>
+            </section>
+        </div>
+
+        <!-- Feature 6: SETTINGS TAB -->
+        <div id="tab-settings" class="tab-content">
+            <section>
+                <h2>Settings & Configuration</h2>
+                
+                <div class="settings-section">
+                    <h3>🤖 LLM Profiles</h3>
+                    <div id="llm-profiles-list" class="profiles-list"></div>
+                    <button onclick="showCreateProfileModal()" class="btn-primary">➕ Create New Profile</button>
+                </div>
+
+                <div class="settings-section">
+                    <h3>🔌 Available Providers</h3>
+                    <div id="providers-list" class="providers-list"></div>
+                    <button onclick="loadProviders()" class="btn-secondary">🔄 Load Providers</button>
+                </div>
+
+                <div class="settings-section">
+                    <h3>📁 Files</h3>
+                    <div id="files-list" class="files-list"></div>
+                    <button onclick="loadFiles()" class="btn-secondary">🔄 Load Files</button>
+                </div>
+
+                <div class="settings-section">
+                    <h3>ℹ️ About</h3>
+                    <p><strong>VibeSurf Pro</strong> - Enhanced Web UI v2.0</p>
+                    <p><strong>Features:</strong></p>
+                    <ul>
+                        <li>✅ File Upload & Management</li>
+                        <li>✅ Complete Task History</li>
+                        <li>✅ Detailed Progress Status</li>
+                        <li>✅ LLM Profile Selection</li>
+                        <li>✅ Browser Tab Control</li>
+                        <li>✅ Full Settings Panel</li>
+                    </ul>
+                    <div style="margin-top: 15px;">
+                        <a href="/docs" target="_blank" class="btn-secondary">📚 API Documentation</a>
+                        <a href="https://github.com/vibesurf-ai/VibeSurf" target="_blank" class="btn-secondary">💻 GitHub</a>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <footer>
+            <p>VibeSurf Pro v2.0 - Enhanced Edition | <a href="/docs" target="_blank">API Docs</a></p>
+        </footer>
+    </div>
+
+    <!-- MODAL: Create LLM Profile -->
+    <div id="create-profile-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeCreateProfileModal()">&times;</span>
+            <h2>Create LLM Profile</h2>
+            <form id="create-profile-form" onsubmit="createLLMProfile(event)">
+                <div class="form-group">
+                    <label>Profile Name:</label>
+                    <input type="text" id="profile-name" required placeholder="e.g., my-gpt4-profile">
+                </div>
+                <div class="form-group">
+                    <label>Provider:</label>
+                    <select id="profile-provider" onchange="loadProviderModels()" required>
+                        <option value="">Select Provider</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Model:</label>
+                    <select id="profile-model" required>
+                        <option value="">Select Model First</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>API Endpoint (optional):</label>
+                    <input type="text" id="profile-endpoint" placeholder="Leave empty for default">
+                </div>
+                <div class="form-group">
+                    <label>API Key (optional):</label>
+                    <input type="password" id="profile-api-key" placeholder="Leave empty to use environment variable">
+                </div>
+                <button type="submit" class="btn-primary">✅ Create Profile</button>
+                <button type="button" onclick="closeCreateProfileModal()" class="btn-secondary">❌ Cancel</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: Task Details -->
+    <div id="task-details-modal" class="modal">
+        <div class="modal-content large">
+            <span class="close" onclick="closeTaskDetailsModal()">&times;</span>
+            <h2>Task Details</h2>
+            <div id="task-details-content"></div>
+        </div>
+    </div>
+
+    <script src="/web_ui/app.js"></script>
+</body>
+</html>
