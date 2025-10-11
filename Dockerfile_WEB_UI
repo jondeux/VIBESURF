@@ -264,42 +264,75 @@ main_path = Path("vibe_surf/backend/main.py")
 content = main_path.read_text()
 
 # Check if already patched
-if "setup_web_ui" in content:
+if "WEB_UI_AVAILABLE" in content:
     print("✅ main.py already patched with web UI")
     sys.exit(0)
 
-# Add import at the top after other imports
-# Find the last import statement
-import_pattern = r'(from [^\n]+\nimport [^\n]+\n|import [^\n]+\n)'
-imports = list(re.finditer(import_pattern, content))
+print("📝 Patching main.py to add web UI support...")
 
-if imports:
-    # Add after last import
-    last_import = imports[-1]
-    insert_pos = last_import.end()
+# Strategy: Find the module docstring end and add imports right after
+# Look for the first actual import statement (not in docstring)
+first_import_pattern = r'^(from |import )'
+lines = content.split('\n')
+first_import_line = -1
+
+in_docstring = False
+docstring_char = None
+
+for i, line in enumerate(lines):
+    stripped = line.strip()
     
-    new_import = "\n# Web UI integration\ntry:\n    from web_ui import setup_web_ui\n    WEB_UI_AVAILABLE = True\nexcept ImportError:\n    WEB_UI_AVAILABLE = False\n    print('⚠️ web_ui.py not found, web interface disabled')\n"
+    # Track docstrings
+    if stripped.startswith('"""') or stripped.startswith("'''"):
+        if not in_docstring:
+            in_docstring = True
+            docstring_char = stripped[:3]
+            if stripped.endswith(docstring_char) and len(stripped) > 3:
+                in_docstring = False
+        elif stripped.endswith(docstring_char):
+            in_docstring = False
+            continue
     
-    content = content[:insert_pos] + new_import + content[insert_pos:]
-else:
+    # Find first import outside docstring
+    if not in_docstring and re.match(first_import_pattern, stripped):
+        first_import_line = i
+        break
+
+if first_import_line == -1:
     print("❌ Could not find import section")
     sys.exit(1)
 
-# Find where app is created - look for pattern "app = FastAPI(" followed by closing )
-# This handles multi-line FastAPI initialization
-app_pattern = r'(app = FastAPI\([^)]*\))'
+print(f"Found first import at line {first_import_line}")
+
+# Insert web UI import before first import
+web_ui_import = """# Web UI integration
+try:
+    from web_ui import setup_web_ui
+    WEB_UI_AVAILABLE = True
+except ImportError:
+    WEB_UI_AVAILABLE = False
+    print('⚠️ web_ui.py not found, web interface disabled')
+
+"""
+
+lines.insert(first_import_line, web_ui_import)
+content = '\n'.join(lines)
+
+# Find where app is created
+app_pattern = r'app = FastAPI\([^)]*\)'
 match = re.search(app_pattern, content, re.DOTALL)
 
 if not match:
     print("❌ Could not find app = FastAPI() declaration")
     sys.exit(1)
 
-# Insert web UI setup after the FastAPI app creation
+print(f"Found app = FastAPI() at position {match.start()}")
+
+# Find the line end after app creation
 insert_pos = match.end()
-# Find the next newline after the FastAPI declaration
 next_newline = content.find('\n', insert_pos)
 if next_newline == -1:
-    next_newline = insert_pos
+    next_newline = len(content)
 
 web_ui_setup = """
 
@@ -320,6 +353,9 @@ content = content[:next_newline] + web_ui_setup + content[next_newline:]
 # Write patched version
 main_path.write_text(content)
 print("✅ Successfully patched main.py with web UI integration")
+print(f"   - Added WEB_UI_AVAILABLE flag")
+print(f"   - Added setup_web_ui() call")
+print(f"   - Added error handling")
 EOF
 
 RUN /home/user/.venv/bin/python patch_main.py && \
