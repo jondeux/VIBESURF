@@ -1953,7 +1953,7 @@ i. **Using Your Own Browser(Optional):**
 </INPUT_FORMAT>
 
 <TASK_EXECUTION>
-**Primary Task**: Convert the provided APPLICATION_INSTALL commands into a production-ready HuggingFace Spaces Dockerfile, gradio_demo.py & other files using the PROVEN_PRODUCTION_EXAMPLES and ESSENTIAL_PATTERNS above, that addresses all application requirements and follows HF Spaces compliance standards. 
+**Primary Task**: Convert the provided APPLICATION_INSTALL commands into a production-ready HuggingFace Spaces Dockerfile file using the PROVEN_PRODUCTION_EXAMPLES and ESSENTIAL_PATTERNS above, that addresses all application requirements and follows HF Spaces compliance standards. 
 
 **Implementation Steps**:
 1. **Analyze** the provided installation commands to identify application type, dependencies, and requirements
