@@ -1,3 +1,20 @@
+# ⚠️⚠️⚠️ DEPRECATED - DO NOT USE ⚠️⚠️⚠️
+#
+# This Dockerfile DOES NOT WORK and should NOT be used!
+#
+# WHY: VibeSurf's Chrome extension relies on Chrome Extension APIs
+# (chrome.runtime, chrome.storage, chrome.tabs, etc.) that DO NOT EXIST
+# in regular web browsers. The UI loads but ALL functionality is broken.
+#
+# CORRECT APPROACH:
+# 1. Use Dockerfile_API for backend (HuggingFace Spaces)
+# 2. Users install Chrome extension locally
+# 3. Extension connects to backend via API
+#
+# See docs/HUGGINGFACE_DEPLOYMENT.md for the correct deployment guide.
+# See docs/DOCKERFILE_WEB_UI_DEPRECATED.md for detailed explanation.
+# ⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️
+
 # VIBESURF WEB UI: HuggingFace Spaces with Integrated Web Interface
 # Python 3.12-slim base for optimal AI application compatibility
 FROM python:3.12-slim
