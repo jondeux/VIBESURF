@@ -1,0 +1,812 @@
+# VIBESURF WEB: Complete Production Dockerfile with Integrated Web UI
+# Based on Steel Browser's architecture: API + Web UI in single container
+# Python 3.12-slim base for optimal AI application compatibility
+FROM python:3.12-slim
+
+# HF SPACES STANDARD: Set environment variables for optimal containerized execution
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANGUAGE=en_US:en \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8
+
+# VIBESURF CONFIG: Environment variables for VibeSurf configuration
+ENV VIBESURF_BACKEND_PORT=7860 \
+    BROWSER_USE_LOGGING_LEVEL=info \
+    ANONYMIZED_TELEMETRY=false \
+    IN_DOCKER=true \
+    BROWSER_USE_CALCULATE_COST=false \
+    VIBESURF_DEBUG=false \
+    # Display configuration for browser automation
+    DISPLAY=:99 \
+    DBUS_SESSION_BUS_ADDRESS=autolaunch: \
+    # Chrome configuration
+    CHROME_BIN=/usr/bin/chromium \
+    CHROME_PATH=/usr/bin/chromium \
+    CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu"
+
+# SYSTEM DEPENDENCIES: Install required system packages for browser automation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Core system utilities
+    git \
+    wget \
+    curl \
+    gnupg \
+    ca-certificates \
+    unzip \
+    build-essential \
+    pkg-config \
+    # Display and X11 dependencies for headless browser
+    xvfb \
+    x11vnc \
+    dbus-x11 \
+    xauth \
+    # Chromium browser for automation
+    chromium \
+    chromium-driver \
+    # Font support for better rendering
+    fonts-liberation \
+    fonts-dejavu-core \
+    fonts-freefont-ttf \
+    fonts-noto-core \
+    fonts-noto-color-emoji \
+    fonts-ipafont-gothic \
+    fonts-wqy-zenhei \
+    fonts-thai-tlwg \
+    # Enhanced browser dependencies for stability
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxrandr2 \
+    libxfixes3 \
+    libxcomposite1 \
+    libasound2 \
+    libxdamage1 \
+    libxrender1 \
+    libgbm1 \
+    libxss1 \
+    libxtst6 \
+    libpangocairo-1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf-2.0-0 \
+    libdbus-1-3 \
+    libx11-xcb1 \
+    libxcursor1 \
+    libxi6 \
+    libfontconfig1 \
+    libxkbcommon0 \
+    # Additional debugging tools
+    procps \
+    htop \
+    && rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+
+# HF SPACES STANDARD: Create non-root user with UID 1000 for security compliance
+RUN if ! id -u 1000 >/dev/null 2>&1; then \
+        useradd -m -u 1000 user; \
+    else \
+        if ! id -u user >/dev/null 2>&1; then \
+            usermod -d /home/user -m $(id -un 1000) && \
+            usermod -l user $(id -un 1000); \
+        fi; \
+    fi
+
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.venv/bin:/home/user/.local/bin:$PATH
+WORKDIR $HOME/app
+
+# COPY UV: Advanced dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uvx /usr/local/bin/uvx
+
+# SOURCE CODE: Clone VibeSurf repository
+RUN git clone https://github.com/vvincent1234/VibeSurf.git . && \
+    echo "VibeSurf repository cloned successfully"
+
+# ENHANCED DIRECTORY STRUCTURE: Create comprehensive directory structure with proper permissions
+RUN mkdir -p $HOME/app/data \
+             $HOME/app/data/profiles \
+             $HOME/app/data/workspace \
+             $HOME/app/data/database \
+             $HOME/app/logs \
+             $HOME/app/tmp \
+             $HOME/app/web_ui \
+             $HOME/.config/vibesurf \
+             $HOME/.config/chromium && \
+    chmod -R 777 $HOME/app/data $HOME/app/logs $HOME/app/tmp $HOME/app/web_ui $HOME/.config
+
+# DEPENDENCY MANAGEMENT: Install VibeSurf dependencies using uv
+RUN uv venv --seed $HOME/.venv && \
+    /usr/local/bin/uv pip install --python $HOME/.venv/bin/python --no-cache -e . && \
+    echo "VibeSurf dependencies installed successfully"
+
+# CONFIGURATION: Create default .env file from example
+RUN cp .env.example .env && \
+    echo "Default environment file created"
+
+# WEB UI: Create standalone web interface (NOT Chrome extension)
+# This is a simple SPA that uses VibeSurf's REST API via fetch()
+RUN mkdir -p $HOME/app/web_ui && cat > $HOME/app/web_ui/index.html <<'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VibeSurf - AI Browser Automation</title>
+    <link rel="stylesheet" href="/web_ui/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌊 VibeSurf</h1>
+            <p>AI-Powered Browser Automation</p>
+            <div class="status" id="status">
+                <span class="status-indicator" id="status-indicator"></span>
+                <span id="status-text">Connecting...</span>
+            </div>
+        </header>
+
+        <main>
+            <section class="task-input">
+                <h2>Submit Task</h2>
+                <textarea 
+                    id="task-input" 
+                    placeholder="Enter your task here... (e.g., 'Search for latest AI news and summarize')"
+                    rows="4"
+                ></textarea>
+                
+                <div class="file-upload">
+                    <input type="file" id="file-input" multiple style="display: none;">
+                    <button onclick="document.getElementById('file-input').click()" class="btn-secondary">
+                        📎 Attach Files
+                    </button>
+                    <div id="file-list"></div>
+                </div>
+
+                <div class="controls">
+                    <button id="submit-btn" class="btn-primary" onclick="submitTask()">
+                        ▶️ Submit Task
+                    </button>
+                    <button id="pause-btn" class="btn-secondary" onclick="pauseTask()" disabled>
+                        ⏸️ Pause
+                    </button>
+                    <button id="resume-btn" class="btn-secondary" onclick="resumeTask()" disabled>
+                        ▶️ Resume
+                    </button>
+                    <button id="stop-btn" class="btn-danger" onclick="stopTask()" disabled>
+                        ⏹️ Stop
+                    </button>
+                </div>
+            </section>
+
+            <section class="results">
+                <h2>Activity Log</h2>
+                <div id="activity-log" class="log-container"></div>
+            </section>
+
+            <section class="results">
+                <h2>Results</h2>
+                <div id="results" class="results-container"></div>
+            </section>
+        </main>
+
+        <footer>
+            <p>VibeSurf v1.0 | <a href="/docs" target="_blank">API Docs</a></p>
+        </footer>
+    </div>
+
+    <script src="/web_ui/app.js"></script>
+</body>
+</html>
+HTMLEOF
+
+# WEB UI CSS
+RUN cat > $HOME/app/web_ui/style.css <<'CSSEOF'
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    overflow: hidden;
+}
+
+header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 30px;
+    text-align: center;
+}
+
+header h1 {
+    font-size: 2.5em;
+    margin-bottom: 10px;
+}
+
+header p {
+    opacity: 0.9;
+    font-size: 1.1em;
+}
+
+.status {
+    margin-top: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #ffd700;
+    animation: pulse 2s infinite;
+}
+
+.status-indicator.connected {
+    background: #4caf50;
+}
+
+.status-indicator.error {
+    background: #f44336;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+main {
+    padding: 30px;
+}
+
+section {
+    margin-bottom: 30px;
+}
+
+h2 {
+    color: #333;
+    margin-bottom: 15px;
+    font-size: 1.5em;
+}
+
+.task-input textarea {
+    width: 100%;
+    padding: 15px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 1em;
+    font-family: inherit;
+    resize: vertical;
+    transition: border-color 0.3s;
+}
+
+.task-input textarea:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.file-upload {
+    margin: 15px 0;
+}
+
+#file-list {
+    margin-top: 10px;
+    font-size: 0.9em;
+    color: #666;
+}
+
+.controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+button {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 6px;
+    font-size: 1em;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-weight: 500;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+}
+
+.btn-secondary {
+    background: #e0e0e0;
+    color: #333;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #d0d0d0;
+}
+
+.btn-danger {
+    background: #f44336;
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #d32f2f;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.log-container, .results-container {
+    background: #f5f5f5;
+    border-radius: 8px;
+    padding: 20px;
+    min-height: 200px;
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+}
+
+.log-entry {
+    padding: 8px;
+    margin-bottom: 8px;
+    background: white;
+    border-radius: 4px;
+    border-left: 4px solid #667eea;
+}
+
+.log-entry.error {
+    border-left-color: #f44336;
+}
+
+.log-entry.success {
+    border-left-color: #4caf50;
+}
+
+.log-timestamp {
+    color: #666;
+    font-size: 0.85em;
+    margin-right: 10px;
+}
+
+footer {
+    background: #f5f5f5;
+    padding: 20px;
+    text-align: center;
+    color: #666;
+}
+
+footer a {
+    color: #667eea;
+    text-decoration: none;
+}
+
+footer a:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+    body {
+        padding: 10px;
+    }
+    
+    header h1 {
+        font-size: 2em;
+    }
+    
+    main {
+        padding: 20px;
+    }
+    
+    .controls {
+        flex-direction: column;
+    }
+    
+    button {
+        width: 100%;
+    }
+}
+CSSEOF
+
+# WEB UI JavaScript
+RUN cat > $HOME/app/web_ui/app.js <<'JSEOF'
+// VibeSurf Web UI - Simple SPA using REST API
+let currentSessionId = null;
+let currentTaskId = null;
+let activityPolling = null;
+
+// Initialize
+document.addEventListener('DOMContentLoaded', async () => {
+    await checkBackendStatus();
+    await generateSessionId();
+    setupFileUpload();
+});
+
+// Check backend health
+async function checkBackendStatus() {
+    try {
+        const response = await fetch('/health');
+        if (response.ok) {
+            updateStatus('connected', 'Backend Connected');
+        } else {
+            updateStatus('error', 'Backend Error');
+        }
+    } catch (error) {
+        updateStatus('error', 'Backend Offline');
+        console.error('Backend health check failed:', error);
+    }
+}
+
+// Generate session ID
+async function generateSessionId() {
+    try {
+        const response = await fetch('/generate-session-id');
+        const data = await response.json();
+        currentSessionId = data.session_id;
+        addLog('Session initialized: ' + currentSessionId);
+    } catch (error) {
+        addLog('Failed to generate session ID', 'error');
+        console.error('Session generation failed:', error);
+    }
+}
+
+// Submit task
+async function submitTask() {
+    const taskInput = document.getElementById('task-input');
+    const task = taskInput.value.trim();
+    
+    if (!task) {
+        alert('Please enter a task');
+        return;
+    }
+    
+    if (!currentSessionId) {
+        await generateSessionId();
+    }
+    
+    const submitBtn = document.getElementById('submit-btn');
+    submitBtn.disabled = true;
+    submitBtn.textContent = '⏳ Submitting...';
+    
+    try {
+        const formData = new FormData();
+        formData.append('task', task);
+        formData.append('session_id', currentSessionId);
+        
+        // Add uploaded files
+        const fileInput = document.getElementById('file-input');
+        for (const file of fileInput.files) {
+            formData.append('upload_files', file);
+        }
+        
+        const response = await fetch('/api/task/submit', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            currentTaskId = data.task_id;
+            addLog('Task submitted successfully!', 'success');
+            addLog('Task ID: ' + currentTaskId);
+            
+            // Enable control buttons
+            document.getElementById('pause-btn').disabled = false;
+            document.getElementById('stop-btn').disabled = false;
+            
+            // Start polling for activity
+            startActivityPolling();
+        } else {
+            const error = await response.text();
+            addLog('Task submission failed: ' + error, 'error');
+        }
+    } catch (error) {
+        addLog('Error submitting task: ' + error.message, 'error');
+        console.error('Task submission error:', error);
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '▶️ Submit Task';
+    }
+}
+
+// Control functions
+async function pauseTask() {
+    await sendControl('/api/task/pause', 'Task paused');
+    document.getElementById('resume-btn').disabled = false;
+    document.getElementById('pause-btn').disabled = true;
+}
+
+async function resumeTask() {
+    await sendControl('/api/task/resume', 'Task resumed');
+    document.getElementById('pause-btn').disabled = false;
+    document.getElementById('resume-btn').disabled = true;
+}
+
+async function stopTask() {
+    await sendControl('/api/task/stop', 'Task stopped');
+    stopActivityPolling();
+    document.getElementById('pause-btn').disabled = true;
+    document.getElementById('resume-btn').disabled = true;
+    document.getElementById('stop-btn').disabled = true;
+}
+
+async function sendControl(endpoint, successMessage) {
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: currentSessionId })
+        });
+        
+        if (response.ok) {
+            addLog(successMessage, 'success');
+        } else {
+            addLog('Control command failed', 'error');
+        }
+    } catch (error) {
+        addLog('Error: ' + error.message, 'error');
+    }
+}
+
+// Activity polling
+function startActivityPolling() {
+    if (activityPolling) return;
+    
+    activityPolling = setInterval(async () => {
+        try {
+            const response = await fetch(`/api/activity/sessions/${currentSessionId}/latest_activity`);
+            if (response.ok) {
+                const activities = await response.json();
+                updateActivity(activities);
+            }
+        } catch (error) {
+            console.error('Activity polling error:', error);
+        }
+    }, 2000); // Poll every 2 seconds
+}
+
+function stopActivityPolling() {
+    if (activityPolling) {
+        clearInterval(activityPolling);
+        activityPolling = null;
+    }
+}
+
+function updateActivity(activities) {
+    if (!activities || activities.length === 0) return;
+    
+    activities.forEach(activity => {
+        addLog(`[${activity.agent_name}] ${activity.action}: ${activity.result || ''}`);
+    });
+}
+
+// File upload
+function setupFileUpload() {
+    const fileInput = document.getElementById('file-input');
+    const fileList = document.getElementById('file-list');
+    
+    fileInput.addEventListener('change', () => {
+        const files = Array.from(fileInput.files);
+        if (files.length > 0) {
+            fileList.textContent = `📎 ${files.length} file(s) selected: ${files.map(f => f.name).join(', ')}`;
+        } else {
+            fileList.textContent = '';
+        }
+    });
+}
+
+// UI Helpers
+function updateStatus(state, text) {
+    const indicator = document.getElementById('status-indicator');
+    const statusText = document.getElementById('status-text');
+    
+    indicator.className = 'status-indicator ' + state;
+    statusText.textContent = text;
+}
+
+function addLog(message, type = 'info') {
+    const logContainer = document.getElementById('activity-log');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry ' + type;
+    
+    const timestamp = new Date().toLocaleTimeString();
+    entry.innerHTML = `<span class="log-timestamp">${timestamp}</span>${message}`;
+    
+    logContainer.appendChild(entry);
+    logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+// Keyboard shortcut: Ctrl+Enter to submit
+document.getElementById('task-input').addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'Enter') {
+        submitTask();
+    }
+});
+JSEOF
+
+# BACKEND INTEGRATION: Add web UI routes to FastAPI
+RUN cat > $HOME/app/web_ui_routes.py <<'EOF'
+"""
+VibeSurf Web UI Routes - Serve standalone web interface
+"""
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, RedirectResponse
+from pathlib import Path
+import os
+
+def setup_web_ui_routes(app: FastAPI):
+    """Setup routes to serve web UI"""
+    
+    web_ui_dir = Path(__file__).parent / "web_ui"
+    
+    if not web_ui_dir.exists():
+        print("⚠️ Web UI directory not found, skipping web UI setup")
+        return
+    
+    # Mount static files
+    app.mount("/web_ui", StaticFiles(directory=str(web_ui_dir)), name="web_ui")
+    
+    # Root redirect to web UI
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return RedirectResponse(url="/web_ui/index.html")
+    
+    print("✅ Web UI routes configured")
+    print("   - Access UI at: http://localhost:7860/")
+    print("   - API docs at: http://localhost:7860/docs")
+
+EOF
+
+# PATCH BACKEND: Integrate web UI into main.py
+RUN cat > $HOME/app/patch_backend.py <<'EOF'
+"""
+Patch main.py to add web UI routes
+"""
+from pathlib import Path
+import re
+
+main_path = Path("vibe_surf/backend/main.py")
+content = main_path.read_text()
+
+# Check if already patched
+if "web_ui_routes" in content:
+    print("✅ Backend already patched")
+    exit(0)
+
+# Find FastAPI app creation
+app_match = re.search(r'app = FastAPI\([^)]*\)', content, re.DOTALL)
+if not app_match:
+    print("❌ Could not find FastAPI app creation")
+    exit(1)
+
+# Insert web UI setup after app creation
+insert_pos = app_match.end()
+next_line = content.find('\n', insert_pos)
+
+web_ui_code = """
+
+# Setup Web UI
+try:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from web_ui_routes import setup_web_ui_routes
+    setup_web_ui_routes(app)
+except Exception as e:
+    print(f"⚠️ Web UI setup failed: {e}")
+    print("API endpoints still available at /docs")
+"""
+
+content = content[:next_line] + web_ui_code + content[next_line:]
+main_path.write_text(content)
+print("✅ Backend patched successfully")
+EOF
+
+RUN /home/user/.venv/bin/python patch_backend.py
+
+# STARTUP SCRIPT: Comprehensive startup with web UI support
+RUN cat > $HOME/app/start.sh <<'EOF'
+#!/bin/bash
+set -e
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+log "=== VibeSurf Web - HuggingFace Spaces Startup ==="
+
+# Initialize services
+cleanup() {
+    pkill chromium || true
+    pkill dbus-daemon || true
+    pkill Xvfb || true
+    sleep 1
+}
+
+start_xvfb() {
+    log "Starting Xvfb..."
+    Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
+    export DISPLAY=:99
+    sleep 2
+}
+
+init_dbus() {
+    log "Initializing DBus..."
+    dbus-daemon --session --fork || true
+    sleep 1
+}
+
+# Environment setup
+if [ -n "$SPACE_HOST" ]; then
+    export API_BASE_URL="https://$SPACE_HOST"
+    log "Using HF Spaces URL: $API_BASE_URL"
+elif [ -n "$HF_SPACE_HOST" ]; then
+    export API_BASE_URL="https://$HF_SPACE_HOST"
+    log "Using HF Spaces URL: $API_BASE_URL"
+else
+    export API_BASE_URL="http://localhost:7860"
+    log "Using local URL: $API_BASE_URL"
+fi
+
+cleanup
+start_xvfb
+init_dbus
+
+log "Starting VibeSurf with Web UI on 0.0.0.0:7860..."
+log "Endpoints:"
+log "  - / (Web UI)"
+log "  - /docs (API Documentation)"
+log "  - /api/* (API Endpoints)"
+
+source $HOME/.venv/bin/activate
+cd $HOME/app
+
+/home/user/.venv/bin/uvicorn vibe_surf.backend.main:app \
+    --host 0.0.0.0 \
+    --port 7860 \
+    --log-level info
+EOF
+
+RUN chmod +x $HOME/app/start.sh
+
+# HF SPACES PORT: Expose port for external access
+EXPOSE 7860
+
+# HEALTH MONITORING: Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:7860/health || exit 1
+
+# STARTUP
+CMD ["./start.sh"]
