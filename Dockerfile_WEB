@@ -484,9 +484,9 @@ async function generateSessionId() {
 // Submit task
 async function submitTask() {
     const taskInput = document.getElementById('task-input');
-    const task = taskInput.value.trim();
+    const taskDescription = taskInput.value.trim();
     
-    if (!task) {
+    if (!taskDescription) {
         alert('Please enter a task');
         return;
     }
@@ -500,19 +500,35 @@ async function submitTask() {
     submitBtn.textContent = '⏳ Submitting...';
     
     try {
-        const formData = new FormData();
-        formData.append('task', task);
-        formData.append('session_id', currentSessionId);
-        
-        // Add uploaded files
-        const fileInput = document.getElementById('file-input');
-        for (const file of fileInput.files) {
-            formData.append('upload_files', file);
+        // Get default LLM profile (or use a default value)
+        let llmProfileName = 'default';
+        try {
+            const profileResponse = await fetch('/api/config/llm-profiles/default/current');
+            if (profileResponse.ok) {
+                const profileData = await profileResponse.json();
+                llmProfileName = profileData.profile_name || 'default';
+            }
+        } catch (e) {
+            console.log('Using default LLM profile');
         }
+        
+        // Build task request - backend expects JSON with specific fields
+        const taskRequest = {
+            session_id: currentSessionId,
+            task_description: taskDescription,
+            llm_profile_name: llmProfileName,
+            agent_mode: 'thinking'
+        };
+        
+        // TODO: Handle file uploads separately if needed
+        // For now, file uploads would need to be implemented via /api/files/upload first
         
         const response = await fetch('/api/tasks/submit', {
             method: 'POST',
-            body: formData
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(taskRequest)
         });
         
         if (response.ok) {
@@ -521,6 +537,9 @@ async function submitTask() {
             addLog('Task submitted successfully!', 'success');
             addLog('Task ID: ' + currentTaskId);
             
+            // Clear input
+            taskInput.value = '';
+            
             // Enable control buttons
             document.getElementById('pause-btn').disabled = false;
             document.getElementById('stop-btn').disabled = false;
@@ -528,8 +547,9 @@ async function submitTask() {
             // Start polling for activity
             startActivityPolling();
         } else {
-            const error = await response.text();
-            addLog('Task submission failed: ' + error, 'error');
+            const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+            const errorMsg = errorData.detail || errorData.message || 'Unknown error';
+            addLog('Task submission failed: ' + errorMsg, 'error');
         }
     } catch (error) {
         addLog('Error submitting task: ' + error.message, 'error');
@@ -566,13 +586,14 @@ async function sendControl(endpoint, successMessage) {
         const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: currentSessionId })
+            body: JSON.stringify({ reason: successMessage })
         });
         
         if (response.ok) {
             addLog(successMessage, 'success');
         } else {
-            addLog('Control command failed', 'error');
+            const errorData = await response.json().catch(() => ({ detail: 'Command failed' }));
+            addLog('Control command failed: ' + (errorData.detail || errorData.message), 'error');
         }
     } catch (error) {
         addLog('Error: ' + error.message, 'error');
