@@ -1,0 +1,482 @@
+# VIBESURF WEB UI: HuggingFace Spaces with Integrated Web Interface
+# Python 3.12-slim base for optimal AI application compatibility
+FROM python:3.12-slim
+
+# HF SPACES STANDARD: Set environment variables for optimal containerized execution
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANGUAGE=en_US:en \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8
+
+# VIBESURF CONFIG: Environment variables for VibeSurf configuration
+ENV VIBESURF_BACKEND_PORT=7860 \
+    BROWSER_USE_LOGGING_LEVEL=info \
+    ANONYMIZED_TELEMETRY=false \
+    IN_DOCKER=true \
+    BROWSER_USE_CALCULATE_COST=false \
+    VIBESURF_DEBUG=false \
+    # Display configuration for browser automation
+    DISPLAY=:99 \
+    DBUS_SESSION_BUS_ADDRESS=autolaunch: \
+    # Chrome configuration
+    CHROME_BIN=/usr/bin/chromium \
+    CHROME_PATH=/usr/bin/chromium \
+    CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu"
+
+# SYSTEM DEPENDENCIES: Install required system packages for browser automation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Core system utilities
+    git \
+    wget \
+    curl \
+    gnupg \
+    ca-certificates \
+    unzip \
+    build-essential \
+    pkg-config \
+    # Display and X11 dependencies for headless browser
+    xvfb \
+    x11vnc \
+    dbus-x11 \
+    xauth \
+    # Chromium browser for automation
+    chromium \
+    chromium-driver \
+    # Font support for better rendering
+    fonts-liberation \
+    fonts-dejavu-core \
+    fonts-freefont-ttf \
+    fonts-noto-core \
+    fonts-noto-color-emoji \
+    fonts-ipafont-gothic \
+    fonts-wqy-zenhei \
+    fonts-thai-tlwg \
+    # Enhanced browser dependencies for stability
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxrandr2 \
+    libxfixes3 \
+    libxcomposite1 \
+    libasound2 \
+    libxdamage1 \
+    libxrender1 \
+    libgbm1 \
+    libxss1 \
+    libxtst6 \
+    libpangocairo-1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf-2.0-0 \
+    libdbus-1-3 \
+    libx11-xcb1 \
+    libxcursor1 \
+    libxi6 \
+    libfontconfig1 \
+    libxkbcommon0 \
+    # Additional debugging tools
+    procps \
+    htop \
+    && rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+
+# HF SPACES STANDARD: Create non-root user with UID 1000 for security compliance
+RUN if ! id -u 1000 >/dev/null 2>&1; then \
+        useradd -m -u 1000 user; \
+    else \
+        if ! id -u user >/dev/null 2>&1; then \
+            usermod -d /home/user -m $(id -un 1000) && \
+            usermod -l user $(id -un 1000); \
+        fi; \
+    fi
+
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.venv/bin:/home/user/.local/bin:$PATH
+WORKDIR $HOME/app
+
+# COPY UV: Advanced dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uvx /usr/local/bin/uvx
+
+# SOURCE CODE: Clone VibeSurf repository
+RUN git clone https://github.com/vvincent1234/VibeSurf.git . && \
+    echo "VibeSurf repository cloned successfully"
+
+# ENHANCED DIRECTORY STRUCTURE: Create comprehensive directory structure with proper permissions
+RUN mkdir -p $HOME/app/data \
+             $HOME/app/data/profiles \
+             $HOME/app/data/workspace \
+             $HOME/app/data/database \
+             $HOME/app/logs \
+             $HOME/app/tmp \
+             $HOME/.config/vibesurf \
+             $HOME/.config/chromium && \
+    chmod -R 777 $HOME/app/data $HOME/app/logs $HOME/app/tmp $HOME/.config
+
+# DEPENDENCY MANAGEMENT: Install VibeSurf dependencies using uv
+RUN uv venv --seed $HOME/.venv && \
+    /usr/local/bin/uv pip install --python $HOME/.venv/bin/python --no-cache -e . && \
+    echo "VibeSurf dependencies installed successfully"
+
+# CONFIGURATION: Create default .env file from example
+RUN cp .env.example .env && \
+    echo "Default environment file created"
+
+# WEB UI: Create web interface wrapper for Chrome extension
+RUN cat > $HOME/app/web_ui.py <<'EOF'
+"""
+VibeSurf Web UI - Serve Chrome Extension as Web Interface
+"""
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, FileResponse
+from pathlib import Path
+import os
+
+def setup_web_ui(app: FastAPI):
+    """Setup web UI routes to serve Chrome extension as web interface"""
+    
+    # Get extension directory
+    extension_dir = Path(__file__).parent / "vibe_surf" / "chrome_extension"
+    
+    # Mount static files (scripts, styles, icons)
+    app.mount("/ui/scripts", StaticFiles(directory=str(extension_dir / "scripts")), name="ui_scripts")
+    app.mount("/ui/styles", StaticFiles(directory=str(extension_dir / "styles")), name="ui_styles")
+    app.mount("/ui/icons", StaticFiles(directory=str(extension_dir / "icons")), name="ui_icons")
+    
+    # Root redirect to UI
+    @app.get("/", response_class=HTMLResponse)
+    async def root():
+        """Redirect root to web UI"""
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta http-equiv="refresh" content="0; url=/ui">
+        </head>
+        <body>
+            <p>Redirecting to VibeSurf UI...</p>
+        </body>
+        </html>
+        """
+    
+    # Serve adapted web UI
+    @app.get("/ui", response_class=HTMLResponse)
+    async def serve_web_ui():
+        """Serve the main web UI (adapted from sidepanel.html)"""
+        
+        # Read the original sidepanel HTML
+        sidepanel_path = extension_dir / "sidepanel.html"
+        
+        if not sidepanel_path.exists():
+            return HTMLResponse(content="""
+                <html>
+                <head><title>VibeSurf UI - Error</title></head>
+                <body>
+                    <h1>Error: UI files not found</h1>
+                    <p>Chrome extension files are not available.</p>
+                    <p>Try accessing the API docs at <a href="/docs">/docs</a></p>
+                </body>
+                </html>
+            """, status_code=500)
+        
+        # Read and adapt the HTML
+        html_content = sidepanel_path.read_text()
+        
+        # Adapt paths for web serving
+        html_content = html_content.replace('"/scripts/', '"/ui/scripts/')
+        html_content = html_content.replace('"/styles/', '"/ui/styles/')
+        html_content = html_content.replace('"/icons/', '"/ui/icons/')
+        html_content = html_content.replace("'/scripts/", "'/ui/scripts/")
+        html_content = html_content.replace("'/styles/", "'/ui/styles/")
+        html_content = html_content.replace("'./scripts/", "'/ui/scripts/")
+        html_content = html_content.replace("'./styles/", "'/ui/styles/")
+        
+        # Inject configuration script for web mode
+        config_script = """
+        <script>
+        // Web UI Configuration
+        window.VIBESURF_WEB_MODE = true;
+        window.VIBESURF_API_BASE = window.location.origin;
+        console.log('VibeSurf Web UI initialized');
+        console.log('API Base:', window.VIBESURF_API_BASE);
+        </script>
+        """
+        
+        # Insert before closing head tag
+        html_content = html_content.replace('</head>', config_script + '</head>')
+        
+        # Add title
+        html_content = html_content.replace('<title>VibeSurf', '<title>VibeSurf Web UI')
+        
+        return HTMLResponse(content=html_content)
+    
+    # Serve config.js with dynamic URL
+    @app.get("/ui/config.js")
+    async def serve_config():
+        """Serve config.js with proper backend URL"""
+        space_host = os.getenv('SPACE_HOST') or os.getenv('HF_SPACE_HOST')
+        
+        if space_host:
+            backend_url = f'https://{space_host}'
+        else:
+            backend_url = 'http://localhost:7860'
+        
+        config_js = f"""
+// VibeSurf Configuration
+const config = {{
+    BACKEND_URL: '{backend_url}',
+    WEB_MODE: true,
+    API_VERSION: 'v1'
+}};
+
+// Export for use in other scripts
+if (typeof module !== 'undefined' && module.exports) {{
+    module.exports = config;
+}}
+"""
+        return HTMLResponse(content=config_js, media_type="application/javascript")
+    
+    print("✅ Web UI routes configured successfully")
+
+EOF
+
+# MODIFY BACKEND: Add Web UI integration to main.py
+RUN cat > $HOME/app/patch_main.py <<'EOF'
+"""
+Patch VibeSurf main.py to include web UI
+"""
+import sys
+from pathlib import Path
+
+# Read current main.py
+main_path = Path("vibe_surf/backend/main.py")
+content = main_path.read_text()
+
+# Check if already patched
+if "setup_web_ui" in content:
+    print("✅ main.py already patched with web UI")
+    sys.exit(0)
+
+# Add import after other imports
+import_section = "from vibe_surf.backend.api import agent, browser, config, task, voices, activity, files"
+if import_section in content:
+    new_import = import_section + "\nfrom web_ui import setup_web_ui"
+    content = content.replace(import_section, new_import)
+else:
+    # Fallback: add after FastAPI import
+    content = content.replace(
+        "from fastapi import FastAPI",
+        "from fastapi import FastAPI\nfrom web_ui import setup_web_ui"
+    )
+
+# Add web UI setup after app creation
+app_creation = 'app = FastAPI('
+if app_creation in content:
+    # Find the closing parenthesis of FastAPI()
+    idx = content.find(app_creation)
+    # Find the next line after app creation
+    next_line_idx = content.find('\n', idx) + 1
+    
+    # Insert web UI setup
+    web_ui_setup = """
+# Setup Web UI (serve Chrome extension as web interface)
+try:
+    setup_web_ui(app)
+except Exception as e:
+    print(f"⚠️ Web UI setup failed: {e}")
+    print("API endpoints still available at /docs")
+
+"""
+    content = content[:next_line_idx] + web_ui_setup + content[next_line_idx:]
+
+# Write patched version
+main_path.write_text(content)
+print("✅ Successfully patched main.py with web UI integration")
+EOF
+
+RUN /home/user/.venv/bin/python patch_main.py && \
+    echo "Backend patched with web UI support"
+
+# STARTUP SCRIPT: Create comprehensive startup script with error handling and web UI support
+RUN cat > $HOME/app/start.sh <<'EOF'
+#!/bin/bash
+set -e
+
+# Function to log with timestamp
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+log "=== VibeSurf Web UI - HuggingFace Spaces Startup ==="
+log "Python version: $(/home/user/.venv/bin/python --version)"
+log "Current directory: $(pwd)"
+
+# Clean up any stale processes
+cleanup() {
+    log "Cleaning up stale processes..."
+    pkill chromium || true
+    pkill dbus-daemon || true
+    pkill Xvfb || true
+    rm -f /run/dbus/pid
+    sleep 1
+}
+
+# Initialize DBus for browser automation
+init_dbus() {
+    log "Initializing DBus..."
+    mkdir -p /var/run/dbus || true
+    dbus-daemon --session --fork || log "DBus daemon may already be running"
+    sleep 2
+    log "DBus initialization completed"
+}
+
+# Start Xvfb for headless display
+start_display() {
+    log "Starting Xvfb display server..."
+    Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
+    XVFB_PID=$!
+    export DISPLAY=:99
+    sleep 3
+    log "Xvfb started with PID: $XVFB_PID"
+}
+
+# Verify Chromium installation
+verify_chrome() {
+    log "Verifying Chromium installation..."
+    if [ -f "/usr/bin/chromium" ]; then
+        chrome_version=$(chromium --version 2>/dev/null || echo "unknown")
+        log "Chromium version: $chrome_version"
+    else
+        log "ERROR: Chromium binary not found at /usr/bin/chromium"
+        return 1
+    fi
+    log "Chrome environment configured successfully"
+    return 0
+}
+
+# DYNAMIC SECRET VALIDATION: Check for any available API keys from HF Spaces secrets
+api_keys=("OPENAI_API_KEY" "ANTHROPIC_API_KEY" "GOOGLE_API_KEY" "AZURE_OPENAI_API_KEY" "DEEPSEEK_API_KEY" "MISTRAL_API_KEY" "MOONSHOT_API_KEY" "DASHSCOPE_API_KEY")
+found_key=false
+for var in "${api_keys[@]}"; do
+    if [ -n "${!var}" ]; then
+        log "✅ Detected API key: $var"
+        found_key=true
+        export "$var=${!var}"
+    fi
+done
+
+if [ "$found_key" = false ]; then
+    log "WARNING: No valid API keys found. At least one of ${api_keys[*]} should be set."
+    log "Some LLM features may be limited. Please set at least one API key in HuggingFace Spaces settings."
+else
+    log "✅ At least one API key detected, proceeding with startup"
+fi
+
+# HF SPACES URL DETECTION AND CONFIGURATION
+if [ -n "$SPACE_HOST" ]; then
+    export API_BASE_URL="https://$SPACE_HOST"
+    export DOMAIN="$SPACE_HOST"
+    log "Using HuggingFace Spaces URL: $API_BASE_URL"
+elif [ -n "$HF_SPACE_HOST" ]; then
+    export API_BASE_URL="https://$HF_SPACE_HOST"
+    export DOMAIN="$HF_SPACE_HOST"
+    log "Using HuggingFace Spaces URL: $API_BASE_URL"
+else
+    export API_BASE_URL="http://localhost:7860"
+    export DOMAIN="localhost:7860"
+    log "Using default URL: $API_BASE_URL"
+fi
+
+# PORT CONFIGURATION: Override port to HF Spaces standard
+export VIBESURF_BACKEND_PORT=7860
+export HOST=0.0.0.0
+export PORT=7860
+
+log "Configuration:"
+log "- Backend port: $VIBESURF_BACKEND_PORT"
+log "- Host: $HOST"
+log "- API Base URL: $API_BASE_URL"
+
+# DATABASE CONFIGURATION: Set database path to persistent data directory
+export VIBESURF_DATABASE_URL="sqlite+aiosqlite:///$HOME/app/data/database/vibesurf.db"
+export VIBESURF_WORKSPACE="$HOME/app/data/workspace"
+
+log "Storage configuration:"
+log "- Database: $VIBESURF_DATABASE_URL"
+log "- Workspace: $VIBESURF_WORKSPACE"
+
+# BROWSER CONFIGURATION: Set browser paths
+export BROWSER_EXECUTION_PATH="/usr/bin/chromium"
+export BROWSER_USER_DATA="$HOME/app/data/profiles"
+
+log "Browser configuration:"
+log "- Execution path: $BROWSER_EXECUTION_PATH"
+log "- User data: $BROWSER_USER_DATA"
+
+# Initial cleanup
+cleanup
+
+# Initialize services
+init_dbus || log "DBus initialization had issues but continuing..."
+start_display || log "Display initialization had issues but continuing..."
+verify_chrome || exit 1
+
+# Verify Python imports
+log "Checking Python imports..."
+/home/user/.venv/bin/python -c "import vibe_surf; print('VibeSurf import successful')" || { log "VibeSurf import failed"; exit 1; }
+/home/user/.venv/bin/python -c "import fastapi; print('FastAPI import successful')" || { log "FastAPI import failed"; exit 1; }
+/home/user/.venv/bin/python -c "import browser_use; print('browser_use import successful')" || { log "browser_use import failed"; exit 1; }
+
+log "Starting VibeSurf with Web UI on $HOST:$PORT..."
+log ""
+log "📊 Available endpoints:"
+log "   - / (Web UI - Main Interface)"
+log "   - /ui (Web UI - Direct Access)"  
+log "   - /docs (API Documentation)"
+log "   - /health (Health Check)"
+log "   - /api/* (API Endpoints)"
+log ""
+
+# Activate virtual environment and start VibeSurf
+source $HOME/.venv/bin/activate
+cd $HOME/app
+
+# Start VibeSurf using uvicorn with proper configuration
+/home/user/.venv/bin/uvicorn vibe_surf.backend.main:app \
+    --host $HOST \
+    --port $PORT \
+    --log-level info \
+    --timeout-keep-alive 120 \
+    --limit-concurrency 50 \
+    --backlog 100 \
+    > $HOME/app/logs/vibesurf.log 2>&1 || { 
+        log "ERROR: VibeSurf backend failed to start, check $HOME/app/logs/vibesurf.log"
+        cat $HOME/app/logs/vibesurf.log
+        exit 1
+    }
+
+# Graceful shutdown
+cleanup
+EOF
+
+RUN chmod +x $HOME/app/start.sh
+
+# HF SPACES PORT: Expose port for external access
+EXPOSE 7860
+
+# HEALTH MONITORING: Health check for application monitoring
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:7860/health || curl -f http://localhost:7860/ || exit 1
+
+# STARTUP: Use the comprehensive startup script with full error handling
+CMD ["./start.sh"]
