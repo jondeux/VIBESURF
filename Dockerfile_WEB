@@ -784,6 +784,18 @@ cleanup
 start_xvfb
 init_dbus
 
+# BROWSER CONFIGURATION: Set browser paths for VibeSurf
+export BROWSER_EXECUTION_PATH=/usr/bin/chromium
+export BROWSER_USER_DATA=$HOME/app/data/profiles
+export VIBESURF_WORKSPACE=$HOME/app/data/workspace
+export VIBESURF_DATABASE_URL="sqlite+aiosqlite:///$HOME/app/data/database/vibesurf.db"
+
+log "Browser configuration:"
+log "  - Execution path: $BROWSER_EXECUTION_PATH"
+log "  - User data: $BROWSER_USER_DATA"
+log "  - Workspace: $VIBESURF_WORKSPACE"
+log "  - Database: $VIBESURF_DATABASE_URL"
+
 log "Starting VibeSurf with Web UI on 0.0.0.0:7860..."
 log "Endpoints:"
 log "  - / (Web UI)"
