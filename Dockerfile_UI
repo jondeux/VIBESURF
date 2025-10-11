@@ -133,20 +133,20 @@ RUN cp .env.example .env
 # VNC DIRECTORY: Create directory for VNC files
 RUN mkdir -p $HOME/.vnc && chmod 700 $HOME/.vnc
 
-# DESKTOP SHORTCUT: Create desktop shortcut for VibeSurf
-RUN cat > $HOME/Desktop/vibesurf.desktop <<'EOF'
+# DESKTOP SHORTCUT: Create desktop shortcut for VibeSurf API Docs
+RUN cat > $HOME/Desktop/vibesurf-api.desktop <<'EOF'
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=VibeSurf
-Comment=Launch VibeSurf with Chrome Extension
-Exec=google-chrome --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --load-extension=/home/user/app/vibe_surf/chrome_extension --user-data-dir=/home/user/app/data/profiles/default http://localhost:9335
-Icon=/home/user/app/vibe_surf/chrome_extension/icons/logo.png
+Name=VibeSurf API
+Comment=Open VibeSurf API Documentation
+Exec=firefox http://localhost:9335/docs
+Icon=text-html
 Terminal=false
 Categories=Network;WebBrowser;
 EOF
 
-RUN chmod +x $HOME/Desktop/vibesurf.desktop
+RUN chmod +x $HOME/Desktop/vibesurf-api.desktop
 
 # COMPREHENSIVE STARTUP SCRIPT: Manage all services
 RUN cat > $HOME/app/start_ui.sh <<'EOF'
@@ -190,14 +190,13 @@ export VIBESURF_DATABASE_URL="sqlite+aiosqlite:///$HOME/app/data/database/vibesu
 export VIBESURF_WORKSPACE="$HOME/app/data/workspace"
 export BROWSER_EXECUTION_PATH="/usr/bin/google-chrome"
 export BROWSER_USER_DATA="$HOME/app/data/profiles"
-export CHROME_DEBUGGING_PORT="9222"
-export BROWSER_USE_CDP_URL="http://127.0.0.1:9222"
+export DISPLAY=:1
 
 log "Configuration:"
 log "- Database: $VIBESURF_DATABASE_URL"
 log "- Workspace: $VIBESURF_WORKSPACE"
-log "- Chrome: $BROWSER_EXECUTION_PATH"
-log "- Chrome Debug Port: $CHROME_DEBUGGING_PORT"
+log "- Chrome: $BROWSER_EXECUTION_PATH (launched by backend)"
+log "- Display: $DISPLAY (VNC session)"
 
 # CLEANUP FUNCTION
 cleanup() {
@@ -205,7 +204,7 @@ cleanup() {
     pkill -f vncserver || true
     pkill -f websockify || true
     pkill -f uvicorn || true
-    pkill -f google-chrome || true
+    # Chrome is managed by backend, will be cleaned up when backend stops
 }
 
 trap cleanup EXIT
@@ -269,43 +268,9 @@ else
     log "WARNING: Extension config.js not found at $CONFIG_JS"
 fi
 
-# START GOOGLE CHROME WITH VIBESURF EXTENSION AND DEBUGGING PORT
-log "Starting Chrome with VibeSurf extension and remote debugging..."
-google-chrome \
-    --remote-debugging-port=9222 \
-    --remote-debugging-address=127.0.0.1 \
-    --no-first-run \
-    --disable-infobars \
-    --no-default-browser-check \
-    --window-size=1920,1080 \
-    --disable-gpu \
-    --disable-software-rasterizer \
-    --disable-dev-shm-usage \
-    --no-sandbox \
-    --disable-setuid-sandbox \
-    --disable-accelerated-2d-canvas \
-    --disable-gl-drawing-for-tests \
-    --disable-features=VizDisplayCompositor \
-    --load-extension="$CHROME_EXTENSION_PATH" \
-    --user-data-dir="/home/user/app/data/profiles/default" \
-    about:blank > /dev/null 2>&1 &
-CHROME_PID=$!
-sleep 5
-
-# Verify Chrome debugging port is accessible
-log "Verifying Chrome debugging port..."
-for i in {1..10}; do
-    if curl -s http://127.0.0.1:9222/json/version > /dev/null 2>&1; then
-        log "✅ Chrome debugging port (9222) is accessible"
-        break
-    fi
-    if [ $i -eq 10 ]; then
-        log "WARNING: Chrome debugging port not accessible after 10 attempts"
-    fi
-    sleep 1
-done
-
-log "✅ Chrome started with PID: $CHROME_PID"
+# NOTE: Chrome will be launched by the VibeSurf backend (browser-use library)
+# We don't start Chrome manually here to avoid conflicts with backend's browser management
+log "Chrome will be launched automatically by VibeSurf backend on DISPLAY :1"
 
 # START NOVNC (WEB-BASED VNC CLIENT)
 log "Starting noVNC web interface on port 7860..."
@@ -380,25 +345,26 @@ log ""
 log "🔓 No password required - just click 'Connect'!"
 log ""
 log "🚀 What's running:"
-log "   - Chrome browser with VibeSurf extension loaded (GPU disabled for stability)"
-log "   - Chrome debugging port: 9222 (for backend connection)"
+log "   - VibeSurf backend on http://localhost:9335 (with resource limits)"
+log "   - Chrome will launch automatically when backend needs it"
+log "   - Chrome will appear on VNC display with VibeSurf extension"
 log "   - Extension configured to connect to http://127.0.0.1:9335"
-log "   - Backend API running on http://localhost:9335 (with resource limits)"
 log "   - Automatic restart with exponential backoff on failures"
 log "   - All services connected and ready!"
 log ""
 log "💡 Usage:"
 log "   1. Open your Space URL in browser"
 log "   2. Click 'Connect' button (no password needed)"
-log "   3. You'll see XFCE desktop with Chrome already open"
-log "   4. Click the VibeSurf extension icon (puzzle piece in toolbar)"
-log "   5. Extension should show 'Connected' status"
-log "   6. Start automating by entering tasks in the side panel"
+log "   3. You'll see XFCE desktop"
+log "   4. Chrome will launch automatically when you start a task"
+log "   5. Use the VibeSurf extension or API to submit tasks"
+log "   6. Browser automation will execute in the VNC session"
 log ""
 log "🔧 Troubleshooting:"
-log "   - If extension shows 'Disconnected': Refresh Chrome page"
-log "   - If extension not visible: Check Chrome extensions (chrome://extensions)"
+log "   - If Chrome doesn't appear: Check backend logs at $HOME/app/logs/backend.log"
+log "   - If browser automation fails: Backend will show error messages"
 log "   - Backend API docs: http://localhost:9335/docs (inside the VNC session)"
+log "   - Submit tasks via API: curl http://localhost:9335/api/agent/task -d '{...}'"
 log ""
 log "📊 Backend API: http://localhost:9335"
 log "📖 API Docs: http://localhost:9335/docs"
