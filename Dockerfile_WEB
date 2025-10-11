@@ -510,7 +510,7 @@ async function submitTask() {
             formData.append('upload_files', file);
         }
         
-        const response = await fetch('/api/task/submit', {
+        const response = await fetch('/api/tasks/submit', {
             method: 'POST',
             body: formData
         });
@@ -542,19 +542,19 @@ async function submitTask() {
 
 // Control functions
 async function pauseTask() {
-    await sendControl('/api/task/pause', 'Task paused');
+    await sendControl('/api/tasks/pause', 'Task paused');
     document.getElementById('resume-btn').disabled = false;
     document.getElementById('pause-btn').disabled = true;
 }
 
 async function resumeTask() {
-    await sendControl('/api/task/resume', 'Task resumed');
+    await sendControl('/api/tasks/resume', 'Task resumed');
     document.getElementById('pause-btn').disabled = false;
     document.getElementById('resume-btn').disabled = true;
 }
 
 async function stopTask() {
-    await sendControl('/api/task/stop', 'Task stopped');
+    await sendControl('/api/tasks/stop', 'Task stopped');
     stopActivityPolling();
     document.getElementById('pause-btn').disabled = true;
     document.getElementById('resume-btn').disabled = true;
