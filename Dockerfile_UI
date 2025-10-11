@@ -140,7 +140,7 @@ Version=1.0
 Type=Application
 Name=VibeSurf
 Comment=Launch VibeSurf with Chrome Extension
-Exec=google-chrome --load-extension=/home/user/app/vibe_surf/chrome_extension --user-data-dir=/home/user/app/data/profiles/default http://localhost:9335
+Exec=google-chrome --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --load-extension=/home/user/app/vibe_surf/chrome_extension --user-data-dir=/home/user/app/data/profiles/default http://localhost:9335
 Icon=/home/user/app/vibe_surf/chrome_extension/icons/logo.png
 Terminal=false
 Categories=Network;WebBrowser;
@@ -190,11 +190,14 @@ export VIBESURF_DATABASE_URL="sqlite+aiosqlite:///$HOME/app/data/database/vibesu
 export VIBESURF_WORKSPACE="$HOME/app/data/workspace"
 export BROWSER_EXECUTION_PATH="/usr/bin/google-chrome"
 export BROWSER_USER_DATA="$HOME/app/data/profiles"
+export CHROME_DEBUGGING_PORT="9222"
+export BROWSER_USE_CDP_URL="http://127.0.0.1:9222"
 
 log "Configuration:"
 log "- Database: $VIBESURF_DATABASE_URL"
 log "- Workspace: $VIBESURF_WORKSPACE"
 log "- Chrome: $BROWSER_EXECUTION_PATH"
+log "- Chrome Debug Port: $CHROME_DEBUGGING_PORT"
 
 # CLEANUP FUNCTION
 cleanup() {
@@ -266,9 +269,11 @@ else
     log "WARNING: Extension config.js not found at $CONFIG_JS"
 fi
 
-# START GOOGLE CHROME WITH VIBESURF EXTENSION
-log "Starting Chrome with VibeSurf extension..."
+# START GOOGLE CHROME WITH VIBESURF EXTENSION AND DEBUGGING PORT
+log "Starting Chrome with VibeSurf extension and remote debugging..."
 google-chrome \
+    --remote-debugging-port=9222 \
+    --remote-debugging-address=127.0.0.1 \
     --no-first-run \
     --disable-infobars \
     --no-default-browser-check \
@@ -283,9 +288,23 @@ google-chrome \
     --disable-features=VizDisplayCompositor \
     --load-extension="$CHROME_EXTENSION_PATH" \
     --user-data-dir="/home/user/app/data/profiles/default" \
-    "http://localhost:9335" > /dev/null 2>&1 &
+    about:blank > /dev/null 2>&1 &
 CHROME_PID=$!
-sleep 3
+sleep 5
+
+# Verify Chrome debugging port is accessible
+log "Verifying Chrome debugging port..."
+for i in {1..10}; do
+    if curl -s http://127.0.0.1:9222/json/version > /dev/null 2>&1; then
+        log "✅ Chrome debugging port (9222) is accessible"
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        log "WARNING: Chrome debugging port not accessible after 10 attempts"
+    fi
+    sleep 1
+done
+
 log "✅ Chrome started with PID: $CHROME_PID"
 
 # START NOVNC (WEB-BASED VNC CLIENT)
@@ -362,6 +381,7 @@ log "🔓 No password required - just click 'Connect'!"
 log ""
 log "🚀 What's running:"
 log "   - Chrome browser with VibeSurf extension loaded (GPU disabled for stability)"
+log "   - Chrome debugging port: 9222 (for backend connection)"
 log "   - Extension configured to connect to http://127.0.0.1:9335"
 log "   - Backend API running on http://localhost:9335 (with resource limits)"
 log "   - Automatic restart with exponential backoff on failures"
