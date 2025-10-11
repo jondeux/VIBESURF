@@ -273,6 +273,14 @@ google-chrome \
     --disable-infobars \
     --no-default-browser-check \
     --window-size=1920,1080 \
+    --disable-gpu \
+    --disable-software-rasterizer \
+    --disable-dev-shm-usage \
+    --no-sandbox \
+    --disable-setuid-sandbox \
+    --disable-accelerated-2d-canvas \
+    --disable-gl-drawing-for-tests \
+    --disable-features=VizDisplayCompositor \
     --load-extension="$CHROME_EXTENSION_PATH" \
     --user-data-dir="/home/user/app/data/profiles/default" \
     "http://localhost:9335" > /dev/null 2>&1 &
@@ -299,12 +307,20 @@ log "Starting VibeSurf backend on localhost:9335..."
 source $HOME/.venv/bin/activate
 cd $HOME/app
 
-$HOME/.venv/bin/uvicorn vibe_surf.backend.main:app \
-    --host 0.0.0.0 \
-    --port 9335 \
-    --log-level info \
-    > $HOME/app/logs/backend.log 2>&1 &
-BACKEND_PID=$!
+# Function to start backend with resource limits
+start_backend() {
+    $HOME/.venv/bin/uvicorn vibe_surf.backend.main:app \
+        --host 0.0.0.0 \
+        --port 9335 \
+        --log-level info \
+        --timeout-keep-alive 120 \
+        --limit-concurrency 50 \
+        --backlog 100 \
+        >> $HOME/app/logs/backend.log 2>&1 &
+    echo $!
+}
+
+BACKEND_PID=$(start_backend)
 sleep 5
 
 # VERIFY BACKEND IS RUNNING
@@ -345,9 +361,10 @@ log ""
 log "🔓 No password required - just click 'Connect'!"
 log ""
 log "🚀 What's running:"
-log "   - Chrome browser with VibeSurf extension loaded"
+log "   - Chrome browser with VibeSurf extension loaded (GPU disabled for stability)"
 log "   - Extension configured to connect to http://127.0.0.1:9335"
-log "   - Backend API running on http://localhost:9335"
+log "   - Backend API running on http://localhost:9335 (with resource limits)"
+log "   - Automatic restart with exponential backoff on failures"
 log "   - All services connected and ready!"
 log ""
 log "💡 Usage:"
@@ -369,21 +386,62 @@ log ""
 log "========================================="
 
 # Keep container running and monitor services
+BACKEND_RESTART_COUNT=0
+BACKEND_RESTART_DELAY=5
+MAX_RESTART_DELAY=300
+NOVNC_RESTART_COUNT=0
+
 while true; do
+    # Monitor noVNC
     if ! kill -0 $NOVNC_PID 2>/dev/null; then
-        log "ERROR: noVNC process died, restarting..."
+        NOVNC_RESTART_COUNT=$((NOVNC_RESTART_COUNT + 1))
+        log "ERROR: noVNC process died (restart #$NOVNC_RESTART_COUNT), restarting..."
         websockify --web=/usr/share/novnc 7860 localhost:5901 > $HOME/app/logs/novnc.log 2>&1 &
         NOVNC_PID=$!
     fi
     
+    # Monitor backend with exponential backoff
     if ! kill -0 $BACKEND_PID 2>/dev/null; then
-        log "ERROR: Backend process died, restarting..."
-        $HOME/.venv/bin/uvicorn vibe_surf.backend.main:app \
-            --host 0.0.0.0 \
-            --port 9335 \
-            --log-level info \
-            > $HOME/app/logs/backend.log 2>&1 &
-        BACKEND_PID=$!
+        BACKEND_RESTART_COUNT=$((BACKEND_RESTART_COUNT + 1))
+        log "ERROR: Backend process died (restart #$BACKEND_RESTART_COUNT)"
+        
+        # Capture last 100 lines of backend log for debugging
+        log "Last 100 lines of backend log:"
+        tail -100 $HOME/app/logs/backend.log
+        
+        # Rotate log if it's getting too large (>10MB)
+        log_size=$(stat -f%z "$HOME/app/logs/backend.log" 2>/dev/null || stat -c%s "$HOME/app/logs/backend.log" 2>/dev/null || echo 0)
+        if [ "$log_size" -gt 10485760 ]; then
+            mv $HOME/app/logs/backend.log $HOME/app/logs/backend.log.old
+            log "Rotated backend log (size: $log_size bytes)"
+        fi
+        
+        # Exponential backoff (5s, 10s, 20s, 40s, ..., max 300s)
+        if [ $BACKEND_RESTART_COUNT -gt 10 ]; then
+            log "WARNING: Backend has crashed $BACKEND_RESTART_COUNT times. This may indicate a serious issue."
+        fi
+        
+        log "Waiting ${BACKEND_RESTART_DELAY}s before restarting backend..."
+        sleep $BACKEND_RESTART_DELAY
+        
+        # Increase delay for next restart (exponential backoff)
+        BACKEND_RESTART_DELAY=$((BACKEND_RESTART_DELAY * 2))
+        if [ $BACKEND_RESTART_DELAY -gt $MAX_RESTART_DELAY ]; then
+            BACKEND_RESTART_DELAY=$MAX_RESTART_DELAY
+        fi
+        
+        log "Restarting backend..."
+        BACKEND_PID=$(start_backend)
+        
+        # Wait and verify backend started
+        sleep 5
+        if kill -0 $BACKEND_PID 2>/dev/null; then
+            log "✅ Backend restarted successfully (PID: $BACKEND_PID)"
+            # Reset delay on successful restart
+            BACKEND_RESTART_DELAY=5
+        else
+            log "❌ Backend failed to restart"
+        fi
     fi
     
     sleep 30
