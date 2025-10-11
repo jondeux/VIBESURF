@@ -257,6 +257,7 @@ Patch VibeSurf main.py to include web UI
 """
 import sys
 from pathlib import Path
+import re
 
 # Read current main.py
 main_path = Path("vibe_surf/backend/main.py")
@@ -267,37 +268,54 @@ if "setup_web_ui" in content:
     print("✅ main.py already patched with web UI")
     sys.exit(0)
 
-# Add import after other imports
-import_section = "from vibe_surf.backend.api import agent, browser, config, task, voices, activity, files"
-if import_section in content:
-    new_import = import_section + "\nfrom web_ui import setup_web_ui"
-    content = content.replace(import_section, new_import)
-else:
-    # Fallback: add after FastAPI import
-    content = content.replace(
-        "from fastapi import FastAPI",
-        "from fastapi import FastAPI\nfrom web_ui import setup_web_ui"
-    )
+# Add import at the top after other imports
+# Find the last import statement
+import_pattern = r'(from [^\n]+\nimport [^\n]+\n|import [^\n]+\n)'
+imports = list(re.finditer(import_pattern, content))
 
-# Add web UI setup after app creation
-app_creation = 'app = FastAPI('
-if app_creation in content:
-    # Find the closing parenthesis of FastAPI()
-    idx = content.find(app_creation)
-    # Find the next line after app creation
-    next_line_idx = content.find('\n', idx) + 1
+if imports:
+    # Add after last import
+    last_import = imports[-1]
+    insert_pos = last_import.end()
     
-    # Insert web UI setup
-    web_ui_setup = """
-# Setup Web UI (serve Chrome extension as web interface)
-try:
-    setup_web_ui(app)
-except Exception as e:
-    print(f"⚠️ Web UI setup failed: {e}")
-    print("API endpoints still available at /docs")
+    new_import = "\n# Web UI integration\ntry:\n    from web_ui import setup_web_ui\n    WEB_UI_AVAILABLE = True\nexcept ImportError:\n    WEB_UI_AVAILABLE = False\n    print('⚠️ web_ui.py not found, web interface disabled')\n"
+    
+    content = content[:insert_pos] + new_import + content[insert_pos:]
+else:
+    print("❌ Could not find import section")
+    sys.exit(1)
 
+# Find where app is created - look for pattern "app = FastAPI(" followed by closing )
+# This handles multi-line FastAPI initialization
+app_pattern = r'(app = FastAPI\([^)]*\))'
+match = re.search(app_pattern, content, re.DOTALL)
+
+if not match:
+    print("❌ Could not find app = FastAPI() declaration")
+    sys.exit(1)
+
+# Insert web UI setup after the FastAPI app creation
+insert_pos = match.end()
+# Find the next newline after the FastAPI declaration
+next_newline = content.find('\n', insert_pos)
+if next_newline == -1:
+    next_newline = insert_pos
+
+web_ui_setup = """
+
+# Setup Web UI (serve Chrome extension as web interface)
+if WEB_UI_AVAILABLE:
+    try:
+        setup_web_ui(app)
+        print("✅ Web UI enabled at / and /ui")
+    except Exception as e:
+        print(f"⚠️ Web UI setup failed: {e}")
+        print("API endpoints still available at /docs")
+else:
+    print("ℹ️ Web UI not available, API-only mode")
 """
-    content = content[:next_line_idx] + web_ui_setup + content[next_line_idx:]
+
+content = content[:next_newline] + web_ui_setup + content[next_newline:]
 
 # Write patched version
 main_path.write_text(content)
