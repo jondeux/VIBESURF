@@ -1,0 +1,403 @@
+# VIBESURF UI: HuggingFace Spaces Dockerfile with Full Browser UI
+# Ubuntu 22.04 base for better desktop environment support
+FROM ubuntu:22.04
+
+# HF SPACES STANDARD: Set environment variables for optimal containerized execution
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANGUAGE=en_US:en \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8
+
+# DISPLAY CONFIGURATION: Set up for VNC-based UI
+ENV DISPLAY=:1 \
+    VNC_PORT=5901 \
+    NOVNC_PORT=7860 \
+    VNC_RESOLUTION=1920x1080 \
+    VNC_COL_DEPTH=24
+
+# VIBESURF CONFIG: Environment variables for VibeSurf configuration
+ENV VIBESURF_BACKEND_PORT=9335 \
+    BROWSER_USE_LOGGING_LEVEL=info \
+    ANONYMIZED_TELEMETRY=false \
+    IN_DOCKER=true \
+    VIBESURF_DEBUG=false
+
+# SYSTEM DEPENDENCIES: Install core utilities first
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Core system utilities
+    git \
+    wget \
+    curl \
+    gnupg \
+    ca-certificates \
+    software-properties-common \
+    apt-transport-https \
+    supervisor \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# PYTHON 3.12: Add deadsnakes PPA and install Python 3.12
+RUN add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# GOOGLE CHROME: Install using modern method (no deprecated apt-key)
+RUN wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+    apt-get update && \
+    apt-get install -y /tmp/google-chrome.deb && \
+    rm /tmp/google-chrome.deb && \
+    rm -rf /var/lib/apt/lists/*
+
+# DESKTOP ENVIRONMENT: Install VNC and XFCE
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Virtual framebuffer X server (better X11 support than TightVNC)
+    xvfb \
+    # VNC Server that connects to existing X display
+    x11vnc \
+    # Desktop environment
+    xfce4 \
+    xfce4-goodies \
+    dbus-x11 \
+    x11-xserver-utils \
+    x11-utils \
+    # noVNC for web-based VNC access
+    novnc \
+    websockify \
+    # Window manager and utilities
+    xterm \
+    menu \
+    xfonts-base \
+    xfonts-100dpi \
+    xfonts-75dpi \
+    # Font support
+    fonts-liberation \
+    fonts-dejavu-core \
+    fonts-freefont-ttf \
+    fonts-noto-core \
+    fonts-noto-color-emoji \
+    # Process management
+    procps \
+    net-tools \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
+
+# HF SPACES STANDARD: Create non-root user with UID 1000
+RUN if ! id -u 1000 >/dev/null 2>&1; then \
+        useradd -m -u 1000 -s /bin/bash user; \
+    else \
+        if ! id -u user >/dev/null 2>&1; then \
+            usermod -d /home/user -m $(id -un 1000) && \
+            usermod -l user $(id -un 1000); \
+        fi; \
+    fi && \
+    mkdir -p /home/user/.vnc && \
+    chown -R user:user /home/user
+
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH
+WORKDIR $HOME/app
+
+# COPY UV: Advanced Python dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uvx /usr/local/bin/uvx
+
+# SOURCE CODE: Clone VibeSurf repository
+RUN git clone https://github.com/vibesurf-ai/VibeSurf.git . && \
+    echo "VibeSurf repository cloned successfully"
+
+# DIRECTORY STRUCTURE: Create necessary directories
+RUN mkdir -p $HOME/app/data \
+             $HOME/app/data/profiles \
+             $HOME/app/data/workspace \
+             $HOME/app/data/database \
+             $HOME/app/logs \
+             $HOME/.vnc \
+             $HOME/.config/google-chrome \
+             $HOME/Desktop && \
+    chmod -R 777 $HOME/app/data $HOME/app/logs $HOME/.config
+
+# DEPENDENCY MANAGEMENT: Install VibeSurf dependencies
+RUN /usr/local/bin/uv venv --python 3.12 --seed $HOME/.venv && \
+    /usr/local/bin/uv pip install --python $HOME/.venv/bin/python --no-cache -e . && \
+    echo "VibeSurf dependencies installed successfully"
+
+# CONFIGURATION: Create default .env file
+RUN cp .env.example .env
+
+# VNC DIRECTORY: Create directory for VNC files
+RUN mkdir -p $HOME/.vnc && chmod 700 $HOME/.vnc
+
+# DESKTOP SHORTCUT: Create desktop shortcut for VibeSurf
+RUN cat > $HOME/Desktop/vibesurf.desktop <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=VibeSurf
+Comment=Launch VibeSurf with Chrome Extension
+Exec=google-chrome --load-extension=/home/user/app/vibe_surf/chrome_extension --user-data-dir=/home/user/app/data/profiles/default http://localhost:9335
+Icon=/home/user/app/vibe_surf/chrome_extension/icons/logo.png
+Terminal=false
+Categories=Network;WebBrowser;
+EOF
+
+RUN chmod +x $HOME/Desktop/vibesurf.desktop
+
+# COMPREHENSIVE STARTUP SCRIPT: Manage all services
+RUN cat > $HOME/app/start_ui.sh <<'EOF'
+#!/bin/bash
+set -e
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+log "=== VibeSurf UI - HuggingFace Spaces Startup ==="
+log "Initializing VNC-based browser UI environment..."
+
+# DYNAMIC SECRET VALIDATION
+api_keys=("OPENAI_API_KEY" "ANTHROPIC_API_KEY" "GOOGLE_API_KEY" "AZURE_OPENAI_API_KEY" "DEEPSEEK_API_KEY" "MISTRAL_API_KEY")
+found_key=false
+for var in "${api_keys[@]}"; do
+    if [ -n "${!var}" ]; then
+        log "✅ Detected API key: $var"
+        found_key=true
+        export "$var=${!var}"
+    fi
+done
+
+if [ "$found_key" = false ]; then
+    log "WARNING: No API keys found. Please set at least one in HF Spaces secrets."
+fi
+
+# HF SPACES URL DETECTION
+if [ -n "$SPACE_HOST" ]; then
+    export API_BASE_URL="https://$SPACE_HOST"
+elif [ -n "$HF_SPACE_HOST" ]; then
+    export API_BASE_URL="https://$HF_SPACE_HOST"
+else
+    export API_BASE_URL="http://localhost:9335"
+fi
+log "API Base URL: $API_BASE_URL"
+
+# DATABASE AND WORKSPACE CONFIGURATION
+export VIBESURF_DATABASE_URL="sqlite+aiosqlite:///$HOME/app/data/database/vibesurf.db"
+export VIBESURF_WORKSPACE="$HOME/app/data/workspace"
+export BROWSER_EXECUTION_PATH="/usr/bin/google-chrome"
+export BROWSER_USER_DATA="$HOME/app/data/profiles"
+
+log "Configuration:"
+log "- Database: $VIBESURF_DATABASE_URL"
+log "- Workspace: $VIBESURF_WORKSPACE"
+log "- Chrome: $BROWSER_EXECUTION_PATH"
+
+# CLEANUP FUNCTION
+cleanup() {
+    log "Cleaning up processes..."
+    pkill -f vncserver || true
+    pkill -f websockify || true
+    pkill -f uvicorn || true
+    pkill -f google-chrome || true
+}
+
+trap cleanup EXIT
+
+# SET USER ENVIRONMENT VARIABLE (required by VNC)
+export USER=user
+export HOME=/home/user
+
+# START XVFB (Virtual Framebuffer with RANDR extension)
+log "Starting Xvfb with RANDR extension on :1..."
+Xvfb :1 -screen 0 ${VNC_RESOLUTION}x${VNC_COL_DEPTH} +extension RANDR -ac &
+XVFB_PID=$!
+export DISPLAY=:1
+sleep 3
+
+# VERIFY XVFB IS RUNNING
+if ! kill -0 $XVFB_PID 2>/dev/null; then
+    log "ERROR: Xvfb failed to start"
+    exit 1
+fi
+log "✅ Xvfb started with PID: $XVFB_PID"
+
+# START X11VNC (VNC server that connects to existing X display)
+log "Starting x11vnc on display :1 (port 5901) with no password..."
+
+x11vnc -display :1 \
+    -rfbport 5901 \
+    -nopw \
+    -forever \
+    -shared \
+    -bg \
+    -o $HOME/app/logs/x11vnc.log
+
+sleep 3
+
+# VERIFY X11VNC IS RUNNING
+if ! pgrep -x "x11vnc" > /dev/null; then
+    log "ERROR: x11vnc process not found after startup"
+    log "x11vnc startup log:"
+    cat $HOME/app/logs/x11vnc.log
+    exit 1
+fi
+log "✅ x11vnc started successfully"
+
+# START XFCE DESKTOP
+log "Starting XFCE desktop environment..."
+startxfce4 &
+sleep 5
+log "✅ XFCE desktop started"
+
+# UPDATE VIBESURF EXTENSION BACKEND URL
+log "Configuring VibeSurf extension backend URL..."
+CHROME_EXTENSION_PATH="/home/user/app/vibe_surf/chrome_extension"
+CONFIG_JS="$CHROME_EXTENSION_PATH/config.js"
+
+if [ -f "$CONFIG_JS" ]; then
+    # Update BACKEND_URL in config.js to point to localhost:9335
+    sed -i "s|BACKEND_URL:.*|BACKEND_URL: 'http://127.0.0.1:9335',|g" "$CONFIG_JS"
+    log "✅ Extension configured to connect to http://127.0.0.1:9335"
+else
+    log "WARNING: Extension config.js not found at $CONFIG_JS"
+fi
+
+# START GOOGLE CHROME WITH VIBESURF EXTENSION
+log "Starting Chrome with VibeSurf extension..."
+google-chrome \
+    --no-first-run \
+    --disable-infobars \
+    --no-default-browser-check \
+    --window-size=1920,1080 \
+    --load-extension="$CHROME_EXTENSION_PATH" \
+    --user-data-dir="/home/user/app/data/profiles/default" \
+    "http://localhost:9335" > /dev/null 2>&1 &
+CHROME_PID=$!
+sleep 3
+log "✅ Chrome started with PID: $CHROME_PID"
+
+# START NOVNC (WEB-BASED VNC CLIENT)
+log "Starting noVNC web interface on port 7860..."
+websockify --web=/usr/share/novnc 7860 localhost:5901 > $HOME/app/logs/novnc.log 2>&1 &
+NOVNC_PID=$!
+sleep 3
+
+# VERIFY NOVNC IS RUNNING
+if ! kill -0 $NOVNC_PID 2>/dev/null; then
+    log "ERROR: noVNC failed to start"
+    cat $HOME/app/logs/novnc.log
+    exit 1
+fi
+log "✅ noVNC started successfully (PID: $NOVNC_PID)"
+
+# START VIBESURF BACKEND API
+log "Starting VibeSurf backend on localhost:9335..."
+source $HOME/.venv/bin/activate
+cd $HOME/app
+
+$HOME/.venv/bin/uvicorn vibe_surf.backend.main:app \
+    --host 0.0.0.0 \
+    --port 9335 \
+    --log-level info \
+    > $HOME/app/logs/backend.log 2>&1 &
+BACKEND_PID=$!
+sleep 5
+
+# VERIFY BACKEND IS RUNNING
+if ! kill -0 $BACKEND_PID 2>/dev/null; then
+    log "ERROR: VibeSurf backend failed to start"
+    cat $HOME/app/logs/backend.log
+    exit 1
+fi
+
+# CHECK BACKEND HEALTH
+for i in {1..10}; do
+    if curl -s http://localhost:9335/ > /dev/null; then
+        log "✅ VibeSurf backend is healthy (PID: $BACKEND_PID)"
+        # Verify backend is accessible from different interfaces
+        log "Verifying backend connectivity..."
+        curl -s http://127.0.0.1:9335/health > /dev/null && log "  ✅ Accessible via 127.0.0.1:9335"
+        curl -s http://localhost:9335/health > /dev/null && log "  ✅ Accessible via localhost:9335"
+        log "  ✅ Extension should be able to connect"
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        log "ERROR: Backend health check failed"
+        log "Last 50 lines of backend log:"
+        tail -50 $HOME/app/logs/backend.log
+        exit 1
+    fi
+    sleep 2
+done
+
+log ""
+log "========================================="
+log "🎉 VibeSurf UI is ready!"
+log "========================================="
+log ""
+log "📺 Access the browser UI:"
+log "   https://YOUR_SPACE_URL (opens noVNC web interface)"
+log ""
+log "🔓 No password required - just click 'Connect'!"
+log ""
+log "🚀 What's running:"
+log "   - Chrome browser with VibeSurf extension loaded"
+log "   - Extension configured to connect to http://127.0.0.1:9335"
+log "   - Backend API running on http://localhost:9335"
+log "   - All services connected and ready!"
+log ""
+log "💡 Usage:"
+log "   1. Open your Space URL in browser"
+log "   2. Click 'Connect' button (no password needed)"
+log "   3. You'll see XFCE desktop with Chrome already open"
+log "   4. Click the VibeSurf extension icon (puzzle piece in toolbar)"
+log "   5. Extension should show 'Connected' status"
+log "   6. Start automating by entering tasks in the side panel"
+log ""
+log "🔧 Troubleshooting:"
+log "   - If extension shows 'Disconnected': Refresh Chrome page"
+log "   - If extension not visible: Check Chrome extensions (chrome://extensions)"
+log "   - Backend API docs: http://localhost:9335/docs (inside the VNC session)"
+log ""
+log "📊 Backend API: http://localhost:9335"
+log "📖 API Docs: http://localhost:9335/docs"
+log ""
+log "========================================="
+
+# Keep container running and monitor services
+while true; do
+    if ! kill -0 $NOVNC_PID 2>/dev/null; then
+        log "ERROR: noVNC process died, restarting..."
+        websockify --web=/usr/share/novnc 7860 localhost:5901 > $HOME/app/logs/novnc.log 2>&1 &
+        NOVNC_PID=$!
+    fi
+    
+    if ! kill -0 $BACKEND_PID 2>/dev/null; then
+        log "ERROR: Backend process died, restarting..."
+        $HOME/.venv/bin/uvicorn vibe_surf.backend.main:app \
+            --host 0.0.0.0 \
+            --port 9335 \
+            --log-level info \
+            > $HOME/app/logs/backend.log 2>&1 &
+        BACKEND_PID=$!
+    fi
+    
+    sleep 30
+done
+EOF
+
+RUN chmod +x $HOME/app/start_ui.sh
+
+# HF SPACES PORT: Expose noVNC web interface port
+EXPOSE 7860
+
+# HEALTH MONITORING: Check if noVNC is accessible
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+    CMD curl -f http://localhost:7860/ || exit 1
+
+# STARTUP: Launch comprehensive UI startup script
+CMD ["./start_ui.sh"]

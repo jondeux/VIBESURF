@@ -190,215 +190,447 @@ CMD ["python", "/app/start.py"]
 <APPLICATION_TYPE>Python Web Application with Browser Automation</APPLICATION_TYPE>
 <DOCKERFILE>
 ```dockerfile
-# BROWSER-USE: Python 3.11-slim base for compatibility with browser-use dependencies
-FROM python:3.11-slim
+# BROWSER-USE ENHANCED: HuggingFace Spaces Production Dockerfile with Full Functionality
+# Python 3.12-slim base for compatibility with browser-use and advanced browser automation
+FROM python:3.12-slim
 
 # HF SPACES STANDARD: Set environment variables for optimal containerized execution
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANGUAGE=en_US:en \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8
 
-# SYSTEM DEPENDENCIES: Install required system packages for browser automation and clean up in single layer
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        git \
-        wget \
-        curl \
-        gnupg \
-        ca-certificates \
-        # Playwright browser dependencies for headless Chromium
-        libnss3 \
-        libatk1.0-0 \
-        libatk-bridge2.0-0 \
-        libcups2 \
-        libdrm2 \
-        libxrandr2 \
-        libxfixes3 \
-        libxcomposite1 \
-        libasound2 \
-        libxdamage1 \
-        libxrender1 \
-        libgbm1 \
-        fonts-liberation \
-        libxss1 \
-        libxtst6 \
-        libpangocairo-1.0-0 \
-        libcairo-gobject2 \
-        libgtk-3-0 \
-        libgdk-pixbuf-2.0-0 \
-        # Additional dependencies to ensure Playwright Chromium runs without --with-deps
-        libdbus-1-3 \
-        libx11-xcb1 \
-        libxcursor1 \
-        libxi6 \
-        libfontconfig1 \
-        libxkbcommon0 && \
-    # HF SPACES STANDARD: Clean up apt cache to minimize image size
-    rm -rf /var/lib/apt/lists/* && \
+# BROWSER-USE ENHANCED CONFIG: Environment variables for advanced browser automation
+ENV BROWSER_USE_LOGGING_LEVEL=info \
+    ANONYMIZED_TELEMETRY=false \
+    IN_DOCKER=True \
+    PLAYWRIGHT_BROWSERS_PATH=/home/user/.playwright \
+    BROWSER_USE_HEADLESS=false \
+    BROWSER_USE_USER_DATA_DIR=/home/user/app/data/profiles/default \
+    DATA_DIR=/home/user/app/data \
+    GRADIO_SERVER_NAME=0.0.0.0 \
+    GRADIO_SERVER_PORT=7860 \
+    # Display configuration for non-headless mode
+    DISPLAY=:99 \
+    DBUS_SESSION_BUS_ADDRESS=autolaunch: \
+    # Video recording configuration
+    BROWSER_USE_RECORD_VIDEO=true \
+    BROWSER_USE_VIDEO_DIR=/home/user/app/data/videos \
+    # Advanced Chrome configuration
+    CHROME_BIN=/usr/bin/chromium \
+    CHROME_PATH=/usr/bin/chromium \
+    CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu"
+
+# ENHANCED SYSTEM DEPENDENCIES: Comprehensive system packages for advanced browser automation
+# Install Node.js 20+ repository first
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+
+# Install all system packages including Node.js
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Core system utilities
+    git \
+    wget \
+    curl \
+    gnupg \
+    ca-certificates \
+    unzip \
+    build-essential \
+    pkg-config \
+    # Node.js 20+ and npm 9+ for modern UI features
+    nodejs \
+    npm \
+    # Display and X11 dependencies for non-headless mode
+    xvfb \
+    x11vnc \
+    fluxbox \
+    dbus-x11 \
+    xauth \
+    xfonts-base \
+    xfonts-75dpi \
+    xfonts-100dpi \
+    # Audio support
+    pulseaudio \
+    alsa-utils \
+    # Video recording dependencies
+    ffmpeg \
+    # Advanced Chromium/Chrome dependencies
+    chromium \
+    chromium-driver \
+    # Font support for better rendering
+    fonts-unifont \
+    fonts-liberation \
+    fonts-dejavu-core \
+    fonts-freefont-ttf \
+    fonts-noto-core \
+    fonts-noto-color-emoji \
+    fonts-ipafont-gothic \
+    fonts-wqy-zenhei \
+    fonts-thai-tlwg \
+    # Enhanced browser dependencies for stability
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxrandr2 \
+    libxfixes3 \
+    libxcomposite1 \
+    libasound2 \
+    libxdamage1 \
+    libxrender1 \
+    libgbm1 \
+    libxss1 \
+    libxtst6 \
+    libpangocairo-1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf-2.0-0 \
+    libdbus-1-3 \
+    libx11-xcb1 \
+    libxcursor1 \
+    libxi6 \
+    libfontconfig1 \
+    libxkbcommon0 \
+    # Additional debugging and monitoring tools
+    nano \
+    iputils-ping \
+    dnsutils \
+    jq \
+    procps \
+    htop \
+    tree \
+    # Networking tools
+    netcat-openbsd \
+    lsof \
+    && rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
+# Verify Node.js and npm installation
+RUN node --version && npm --version && echo "✅ Node.js and npm installed successfully"
+
 # HF SPACES STANDARD: Create non-root user with UID 1000 for security compliance
-RUN useradd -m -u 1000 user
+RUN if ! id -u 1000 >/dev/null 2>&1; then \
+        useradd -m -u 1000 user; \
+    else \
+        if ! id -u user >/dev/null 2>&1; then \
+            usermod -d /home/user -m $(id -un 1000) && \
+            usermod -l user $(id -un 1000); \
+        fi; \
+    fi && \
+    # Add user to audio and video groups for hardware access
+    usermod -a -G audio,video user
+
 USER user
 ENV HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH
+    PATH=/home/user/.venv/bin:/home/user/.local/bin:$PATH
 WORKDIR $HOME/app
 
-# SOURCE CODE: Clone repository directly in container for automated builds
-RUN git clone https://github.com/browser-use/web-ui.git . && \
-    echo "Repository cloned successfully"
+# SOURCE CODE: Copy custom files preserving existing functionality
+COPY --chown=1000:1000 gradio_demo.py $HOME/app/gradio_demo.py
+COPY --chown=1000:1000 gradio_demo_enhanced.py $HOME/app/gradio_demo_enhanced.py
+COPY --chown=1000:1000 src/ $HOME/app/src/
 
-# FILE EMBEDDING: Embed requirements.txt content using heredoc pattern
-RUN cat > $HOME/app/requirements.txt <<'EOF'
-browser-use==0.1.48
-pyperclip==1.9.0
-gradio==5.27.0
-json-repair
-langchain-mistralai==0.2.4
-MainContentExtractor==0.0.4
-langchain-ibm==0.3.10
-langchain_mcp_adapters==0.0.9
-langgraph==0.3.34
-langchain-community
-EOF
+# ENHANCED DIRECTORY STRUCTURE: Create comprehensive directory structure with proper permissions
+RUN mkdir -p $HOME/app/data/profiles/default \
+             $HOME/app/data/videos \
+             $HOME/app/data/screenshots \
+             $HOME/app/data/recordings \
+             $HOME/app/logs \
+             $HOME/app/tmp \
+             $HOME/.config/browseruse \
+             $HOME/.config/chromium \
+             $HOME/.config/pulse \
+             $HOME/.vnc \
+             $HOME/.fluxbox && \
+    chmod -R 777 $HOME/app/data $HOME/app/logs $HOME/app/tmp $HOME/.config $HOME/.vnc $HOME/.fluxbox
 
-# FILE EMBEDDING: Embed .env content using heredoc pattern for configuration
+# COPY UV: Advanced dependency management with enhanced packages
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uvx /usr/local/bin/uvx
+
+# ENHANCED DEPENDENCY MANAGEMENT: Install comprehensive browser-use with all optional features
+RUN uv venv --seed $HOME/.venv && \
+    /usr/local/bin/uv pip install --python $HOME/.venv/bin/python --no-cache \
+        # Core browser-use with all extras
+        'browser-use[cli,examples,aws,video,all]>=0.7.10' \
+        # Additional UI and automation libraries
+        'gradio>=5.27.0' \
+        rich \
+        # LangChain ecosystem for updated agent components
+        'langchain>=0.3.0' \
+        'langchain-community>=0.3.0' \
+        'langchain-core>=0.3.0' \
+        'langchain-mcp-adapters>=0.1.0' \
+        'langgraph>=0.2.0' \
+        # Video and image processing
+        'imageio[ffmpeg]>=2.37.0' \
+        'numpy>=2.3.2' \
+        'opencv-python-headless>=4.8.0' \
+        # Enhanced browser automation
+        playwright \
+        selenium \
+        # Audio processing for media content
+        pydub \
+        # Advanced file handling
+        python-magic \
+        # Monitoring and debugging
+        psutil \
+        # Additional LLM providers
+        openai \
+        anthropic \
+        'google-generativeai' \
+        && \
+    # Install Playwright browsers with full dependencies
+    $HOME/.venv/bin/playwright install chromium --with-deps || { \
+        echo "Playwright install failed, attempting alternative installation..."; \
+        $HOME/.venv/bin/playwright install --force chromium; \
+    } && \
+    echo "Enhanced browser-use installation completed with video recording capabilities"
+
+# ENHANCED CONFIGURATION: Comprehensive configuration files for advanced features
 RUN cat > $HOME/app/.env <<'EOF'
-OPENAI_ENDPOINT=https://api.openai.com/v1
-OPENAI_API_KEY=$OPENAI_API_KEY
-
-ANTHROPIC_ENDPOINT=https://api.anthropic.com
-ANTHROPIC_API_KEY=
-
-TOGETHER_ENDPOINT=https://api.together.xyz/v1
-TOGETHER_API_KEY=
-
-DEEPINFRA_ENDPOINT=https://api.deepinfra.com/v1/openai
-DEEPINFRA_API_KEY=
-
-GOOGLE_API_KEY=
-
-AZURE_OPENAI_ENDPOINT=
-AZURE_OPENAI_API_KEY=
-AZURE_OPENAI_API_VERSION=2025-01-01-preview
-
-DEEPSEEK_ENDPOINT=https://api.deepseek.com
-DEEPSEEK_API_KEY=
-
-MISTRAL_API_KEY=
-MISTRAL_ENDPOINT=https://api.mistral.ai/v1
-
-OLLAMA_ENDPOINT=http://localhost:11434
-
-ALIBABA_ENDPOINT=https://dashscope.aliyuncs.com/compatible-mode/v1
-ALIBABA_API_KEY=
-
-MODELSCOPE_ENDPOINT=https://api-inference.modelscope.cn/v1
-MODELSCOPE_API_KEY=
-
-MOONSHOT_ENDPOINT=https://api.moonshot.cn/v1
-MOONSHOT_API_KEY=
-
-UNBOUND_ENDPOINT=https://api.getunbound.ai
-UNBOUND_API_KEY=
-
-SiliconFLOW_ENDPOINT=https://api.siliconflow.cn/v1/
-SiliconFLOW_API_KEY=
-
-IBM_ENDPOINT=https://us-south.ml.cloud.ibm.com
-IBM_API_KEY=
-IBM_PROJECT_ID=
-
-GROK_ENDPOINT=https://api.x.ai/v1
-GROK_API_KEY=
-
-#set default LLM
-DEFAULT_LLM=openai
-
-
-# Set to false to disable anonymized telemetry
+# Enhanced Browser Use Configuration for HuggingFace Spaces
+# Logging Configuration
+BROWSER_USE_LOGGING_LEVEL=info
+BROWSER_USE_DEBUG_LOG_FILE=logs/debug.log
+BROWSER_USE_INFO_LOG_FILE=logs/info.log
+CDP_LOGGING_LEVEL=WARNING
 ANONYMIZED_TELEMETRY=false
 
-# LogLevel: Set to debug to enable verbose logging, set to result to get results only. Available: result | debug | info
-BROWSER_USE_LOGGING_LEVEL=info
+# Model Configuration - Enhanced API Support
+OPENAI_API_KEY=$OPENAI_API_KEY
+ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+AZURE_OPENAI_API_KEY=$AZURE_OPENAI_API_KEY
+AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT
+GOOGLE_API_KEY=$GOOGLE_API_KEY
+GROQ_API_KEY=$GROQ_API_KEY
+TOGETHERAI_API_KEY=$TOGETHERAI_API_KEY
+DEEPINFRA_API_KEY=$DEEPINFRA_API_KEY
+OPENROUTER_API_KEY=$OPENROUTER_API_KEY
 
-# Browser settings
-BROWSER_PATH=
-BROWSER_USER_DATA=
-BROWSER_DEBUGGING_PORT=9222
-BROWSER_DEBUGGING_HOST=localhost
-# Set to true to keep browser open between AI tasks
-KEEP_BROWSER_OPEN=true
-USE_OWN_BROWSER=false
-BROWSER_CDP=
-# Display settings
-# Format: WIDTHxHEIGHTxDEPTH
-RESOLUTION=1920x1080x24
-# Width in pixels
-RESOLUTION_WIDTH=1920
-# Height in pixels
-RESOLUTION_HEIGHT=1080
+# Enhanced Browser Configuration
+BROWSER_USE_HEADLESS=false
+BROWSER_USE_USER_DATA_DIR=./data/profiles/default
+BROWSER_USE_RECORD_VIDEO=true
+BROWSER_USE_VIDEO_DIR=./data/videos
+BROWSER_USE_SCREENSHOT_DIR=./data/screenshots
 
-# VNC settings
-VNC_PASSWORD=youvncpassword
+# Display Configuration for Non-Headless Mode
+DISPLAY=:99
+DBUS_SESSION_BUS_ADDRESS=autolaunch:
+
+# Audio Configuration
+PULSE_RUNTIME_PATH=/run/user/1000/pulse
+XDG_RUNTIME_DIR=/run/user/1000
+
+# Video Encoding Configuration
+FFMPEG_PATH=ffmpeg
+IMAGEIO_FFMPEG_EXE=ffmpeg
+
+# Advanced Chrome Configuration
+CHROME_BIN=/usr/bin/chromium
+CHROME_PATH=/usr/bin/chromium
+CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=TranslateUI --disable-ipc-flooding-protection --enable-logging --v=1 --remote-debugging-port=9222"
+
+# Default LLM Configuration
+DEFAULT_LLM=openrouter
+DEFAULT_MODEL=google/gemini-2.0-flash-001
+
+# Task Configuration
+BROWSER_USE_MAX_WAIT=30000
+BROWSER_USE_TIMEOUT=60000
+BROWSER_USE_SCREENSHOT_ON_ERROR=true
+
+# Security Configuration
+BROWSER_USE_DISABLE_WEB_SECURITY=false
+BROWSER_USE_IGNORE_HTTPS_ERRORS=true
+BROWSER_USE_ALLOW_RUNNING_INSECURE_CONTENT=true
+
+# Performance Configuration
+BROWSER_USE_THROTTLE_CPU=1
+BROWSER_USE_THROTTLE_NETWORK=1
+BROWSER_USE_EXTRA_HTTP_HEADERS=false
+
+# VNC Configuration for Remote Viewing
+VNC_PASSWORD=spaces123
+VNC_PORT=5900
+VNC_RESOLUTION=1920x1080
+
+# Fluxbox Configuration for Window Management
+FLUXBOX_CONFIG=/home/user/.fluxbox/startup
 EOF
 
-# HF SPACES STANDARD: Create directories with proper permissions for writable access
-RUN mkdir -p $HOME/app/tmp/webui_settings $HOME/app/logs $HOME/app/.config/browseruse && \
-    chmod -R 777 $HOME/app/tmp $HOME/app/logs $HOME/app/.config
-
-# DEPENDENCY MANAGEMENT: Install Python packages with proper user installation
-RUN pip install --user --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --user --no-cache-dir -r requirements.txt
-
-# BROWSER AUTOMATION: Install Playwright with Chromium browser for web scraping
-RUN pip install --user --no-cache-dir playwright && \
-    playwright install chromium && \
-    echo "Playwright installation completed"
-
-# STARTUP SCRIPT: Create comprehensive startup script using heredoc with error handling
+# ENHANCED STARTUP SCRIPT: Comprehensive startup with VNC, Xvfb, audio support, and API key validation
 RUN cat > $HOME/app/start.sh <<'EOF'
 #!/bin/bash
 set -e
 
-echo "=== Browser Use WebUI Startup ==="
-echo "Python version: $(python --version)"
-echo "Current directory: $(pwd)"
-echo "Available files:"
+# Function to log with timestamp
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+log "=== Enhanced Browser Use Startup ==="
+log "Python version: $(/home/user/.venv/bin/python --version)"
+log "Current directory: $(pwd)"
+log "Available files:"
 ls -la
 
 # VALIDATION: Check if required application files exist before starting
-if [ ! -f "webui.py" ]; then
-  echo "Error: webui.py not found!"
+if [ ! -f "gradio_demo_enhanced.py" ]; then
+  log "Error: gradio_demo_enhanced.py not found!"
   exit 1
 fi
 
-# SECRET VALIDATION: Check required environment variables from HF Spaces secrets
-required_vars=("OPENAI_API_KEY")
-missing_vars=()
-for var in "${required_vars[@]}"; do
-    if [ -z "${!var}" ]; then
-        missing_vars+=("$var")
+if [ ! -d "src" ]; then
+  log "Error: src/ directory not found!"
+  exit 1
+fi
+
+# DYNAMIC SECRET VALIDATION AND MAPPING: Check for any available API keys from HF Spaces secrets and map them
+api_keys=("OPENAI_API_KEY" "ANTHROPIC_API_KEY" "AZURE_OPENAI_API_KEY" "GOOGLE_API_KEY" "GROQ_API_KEY" "TOGETHERAI_API_KEY" "DEEPINFRA_API_KEY" "OPENROUTER_API_KEY")
+found_key=false
+for var in "${api_keys[@]}"; do
+    if [ -n "${!var}" ]; then
+        log "✅ Detected API key: $var"
+        found_key=true
+        # Map detected API key to environment for gradio_demo.py
+        if [ "$var" = "OPENAI_API_KEY" ]; then
+            export OPENAI_API_KEY="${!var}"
+            log "Mapped $var to OPENAI_API_KEY for application use"
+        elif [ "$var" = "GOOGLE_API_KEY" ]; then
+            export GOOGLE_API_KEY="${!var}"
+            log "Mapped $var to GOOGLE_API_KEY for application use"
+        elif [ "$var" = "ANTHROPIC_API_KEY" ]; then
+            export ANTHROPIC_API_KEY="${!var}"
+            log "Mapped $var to ANTHROPIC_API_KEY for application use"
+        elif [ "$var" = "GROQ_API_KEY" ]; then
+            export GROQ_API_KEY="${!var}"
+            log "Mapped $var to GROQ_API_KEY for application use"
+        elif [ "$var" = "DEEPINFRA_API_KEY" ]; then
+            export DEEPINFRA_API_KEY="${!var}"
+            log "Mapped $var to DEEPINFRA_API_KEY for application use"
+        elif [ "$var" = "TOGETHERAI_API_KEY" ]; then
+            export TOGETHERAI_API_KEY="${!var}"
+            log "Mapped $var to TOGETHERAI_API_KEY for application use"
+        elif [ "$var" = "OPENROUTER_API_KEY" ]; then
+            export OPENROUTER_API_KEY="${!var}"
+            log "Mapped $var to OPENROUTER_API_KEY for application use"
+        elif [ "$var" = "AZURE_OPENAI_API_KEY" ]; then
+            export AZURE_OPENAI_API_KEY="${!var}"
+            log "Mapped $var to AZURE_OPENAI_API_KEY for application use"
+        fi
     fi
 done
-if [ ${#missing_vars[@]} -ne 0 ]; then
-    echo "ERROR: Missing required environment variables: ${missing_vars[*]}"
-    echo "Please set these variables in HuggingFace Spaces settings"
-    exit 1
+
+if [ "$found_key" = false ]; then
+    log "WARNING: No valid API keys found. At least one of ${api_keys[*]} should be set."
+    log "Some LLM features may be limited. Please set at least one API key in HuggingFace Spaces settings."
+else
+    log "✅ At least one API key detected, proceeding with startup"
 fi
 
 # DEBUGGING: Check Python imports and dependency availability
-echo "Checking Python imports..."
-python -c "import sys; print(f\"Python path: {sys.path}\")"
-python -c "import browser_use; print(\"browser_use import successful\")" || echo "browser_use import failed"
-python -c "import gradio; print(\"gradio import successful\")" || echo "gradio import failed"
-python -c "import playwright; print(\"playwright import successful\")" || echo "playwright import failed"
+log "Checking Python imports..."
+/home/user/.venv/bin/python -c "import sys; print('Python path:', sys.path)"
+/home/user/.venv/bin/python -c "import browser_use; print(\"browser_use import successful\")" || { log "browser_use import failed"; exit 1; }
+/home/user/.venv/bin/python -c "import gradio; print(\"gradio import successful\")" || { log "gradio import failed"; exit 1; }
+/home/user/.venv/bin/python -c "import playwright; print(\"playwright import successful\")" || { log "playwright import failed"; exit 1; }
+/home/user/.venv/bin/python -c "import rich; print(\"rich import successful\")" || { log "rich import failed"; exit 1; }
 
-# PORT CONFIGURATION: Start application on HF Spaces standard port
-echo "Starting Browser Use WebUI on 0.0.0.0:7860..."
-exec python webui.py --ip 0.0.0.0 --port 7860
+# Verify Chromium
+log "Checking for Chromium binary in $HOME/.playwright..."
+ls -la $HOME/.playwright
+chromium_binary=$(find $HOME/.playwright -type f -name chrome -path "*/chrome-linux/*" | head -n 1)
+if [ -n "$chromium_binary" ] && [ -f "$chromium_binary" ]; then
+    log "Chromium binary found at: $chromium_binary"
+    chromium_version=$(/home/user/.venv/bin/playwright --version 2>/dev/null || echo "unknown")
+    log "Playwright version: $chromium_version"
+else
+    log "ERROR: Chromium binary not found in $HOME/.playwright"
+    exit 1
+fi
+
+# Cleanup function for graceful shutdown
+cleanup() {
+    log "Cleaning up processes..."
+    pkill -f "playwright" || true
+    pkill -f "chromium" || true
+    pkill -f "Xvfb" || true
+    pkill -f "x11vnc" || true
+    pkill -f "fluxbox" || true
+    pkill -f "pulseaudio" || true
+    sleep 2
+    log "Cleanup completed"
+}
+
+# Trap SIGTERM and SIGINT for graceful shutdown
+trap cleanup SIGTERM SIGINT
+
+# Initialize PulseAudio for audio support
+init_audio() {
+    log "Initializing PulseAudio..."
+    mkdir -p $HOME/.config/pulse
+    pulseaudio --start --exit-idle-time=-1 --load="module-native-protocol-tcp auth-ip-acl=127.0.0.1;0.0.0.0 auth-anonymous=1" || log "PulseAudio may already be running"
+    sleep 2
+    log "PulseAudio initialized"
+}
+
+# Start Xvfb for display server
+start_display() {
+    log "Starting Xvfb display server..."
+    Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
+    XVFB_PID=$!
+    export DISPLAY=:99
+    sleep 3
+    log "Xvfb started with PID: $XVFB_PID"
+    
+    # Start Fluxbox window manager
+    fluxbox -display :99 &
+    FLUXBOX_PID=$!
+    sleep 2
+    log "Fluxbox started with PID: $FLUXBOX_PID"
+}
+
+# Start VNC server for remote viewing
+start_vnc() {
+    log "Starting VNC server for remote browser viewing..."
+    x11vnc -display :99 -nopw -listen localhost -rfbport 5900 -shared -forever -bg -o /home/user/app/logs/vnc.log &
+    VNC_PID=$!
+    sleep 2
+    log "VNC server started with PID: $VNC_PID on port 5900"
+}
+
+# Start services in background
+start_services() {
+    init_audio
+    start_display
+    start_vnc
+}
+
+# Main startup sequence
+start_services
+
+log "Starting Enhanced Browser Use Gradio interface on 0.0.0.0:7860..."
+log "Features enabled:"
+log "- Non-headless browser automation with VNC viewing"
+log "- Video recording with FFmpeg"
+log "- Multiple LLM providers (OpenAI, Anthropic, Groq, etc.)"
+log "- PulseAudio for audio support"
+log "- Xvfb + Fluxbox for display management"
+
+# Activate virtual environment and start Gradio
+source $HOME/.venv/bin/activate
+cd $HOME/app
+/home/user/.venv/bin/python gradio_demo_enhanced.py --server_name 0.0.0.0 --server_port 7860 > $HOME/app/logs/gradio.log 2>&1 || { log "ERROR: Gradio demo failed to start, check $HOME/app/logs/gradio.log"; cat $HOME/app/logs/gradio.log; exit 1; }
+
+# Graceful shutdown
+cleanup
 EOF
 
 RUN chmod +x $HOME/app/start.sh
@@ -410,7 +642,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=$HOME/.playwright \
 # HF SPACES PORT: Expose port for external access
 EXPOSE 7860
 
-# HEALTH MONITORING: Health check to verify application is running and responding
+# HEALTH MONITORING: Enhanced health check with browser validation
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:7860 || exit 1
 
@@ -1615,8 +1847,7 @@ EOF
 <INPUT_FORMAT>
 Included are CONTEXT_FILES which will be used to accomplish upcoming user-required TASK_EXECUTION:
 <CONTEXT_FILES>
-{{docs/Browser-Use-REPO-EXAMPLES-DOCS.md}} &&
-{{docs/Browser-Use-PYPL-PACKAGES-DOCS.md}}
+{{VIBESURF-DOCS.txt}}
 </CONTEXT_FILES>
 
 <CONTEXT_ANALYSIS>
@@ -1632,18 +1863,97 @@ Analyze the provided CONTEXT_FILES and application installation commands to unde
 </CONTEXT_ANALYSIS>
 
 <APPLICATION_INSTALL>
-The root directory files attached, mainly...{{Dockerfile}} & {{gradio_demo.py}} represent a currently running and fully accessible application on huggingface with a user-interface. I want to expand on its current functionalities by adding functions from "Browser-Use-REPO-EXAMPLES-DOCS.md" compatible with it:
-1. create a TODO list that walks through implementing {{Brainstormed-Workable-Features.md}};
-2. create a 'src/' that will hold all new features to be implemented [this avoids overbloating the gradio_demo.py file];
-3. create a 'docs/' that will contain all markdown files of commentaries/instructions/procedures etc (excluding 'CHANGELOG.md' && 'README.md', which belong in the ROOT directory);
-4. create a comprehensive README.md file for the project;
-5. create a CHANGELOG.md file to keep track/record of changes in the project over time [it also structurally links to the other markdown files contained in 'docs/'];
-7. DO NOT BREAK CURRENT WORKING FUNCTIONALITIES BUT EXPAND ON THEM...
+## 🛠️ Installation Guide
+
+#### Step 1: Clone the Repository
+```bash
+git clone https://github.com/vvincent1234/VibeSurf.git
+cd VibeSurf
+```
+
+### Step 2: Set Up Python Environment
+We recommend using [uv](https://docs.astral.sh/uv/) for managing the Python environment. Install uv from [https://docs.astral.sh/uv/getting-started/installation/](https://docs.astral.sh/uv/getting-started/installation/):
+
+```bash
+# On macOS and Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# On Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+### Step 3: Setup and Install python environment with [uv]
+```bash
+uv venv --python 3.12
+```
+
+Activate the virtual environment:
+- Windows (Command Prompt):
+```cmd
+.venv\Scripts\activate
+```
+- Windows (PowerShell):
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+- macOS/Linux:
+```bash
+source .venv/bin/activate
+```
+
+#### Step 4: Install vibesurf Dependencies
+Install Python packages:
+```bash
+uv pip install -e .
+```
+
+#### Step 5: Configure Environment
+1. Create a copy of the example environment file:
+- Windows (Command Prompt):
+```bash
+copy .env.example .env
+```
+- macOS/Linux/Windows (PowerShell):
+```bash
+cp .env.example .env
+```
+2. Open `.env` in your preferred text editor and add your API keys and other settings
+
+
+### Step 6: Launch vibesurf
+
+#### Option 1: Direct Server:-
+```bash
+uvicorn vibe_surf.backend.main:app --host 127.0.0.1 --port 9335
+```
+
+#### Option 2: CLI Entry:-
+```bash
+uv run vibesurf
+```
+
+## Browser Configuration
+i. **Using Your Own Browser(Optional):**
+    - Set `BROWSER_PATH` to the executable path of your browser and `BROWSER_USER_DATA` to the user data directory of your browser. Leave `BROWSER_USER_DATA` empty if you want to use local user data.
+      - Windows
+        ```env
+         BROWSER_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
+         BROWSER_USER_DATA="C:\Users\YourUsername\AppData\Local\Google\Chrome\User Data"
+        ```
+        > Note: Replace `YourUsername` with your actual Windows username for Windows systems.
+      - Mac
+        ```env
+         BROWSER_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+         BROWSER_USER_DATA="/Users/YourUsername/Library/Application Support/Google/Chrome"
+        ```
+    - Close all Chrome windows
+    - Open the WebUI in a non-Chrome browser, such as Firefox or Edge. This is important because the persistent browser context will use the Chrome data when running the agent.
+    - Check the "Use Own Browser" option within the Browser Settings.
 </APPLICATION_INSTALL>
 </INPUT_FORMAT>
 
 <TASK_EXECUTION>
-**Primary Task**: Convert the provided APPLICATION_INSTALL commands into a production-ready HuggingFace Spaces Dockerfile, gradio_demo.py & other files using the PROVEN_PRODUCTION_EXAMPLES and ESSENTIAL_PATTERNS above, that addresses all application requirements and follows HF Spaces compliance standards. 
+**Primary Task**: Convert the provided APPLICATION_INSTALL commands into a production-ready HuggingFace Spaces Dockerfile file using the PROVEN_PRODUCTION_EXAMPLES and ESSENTIAL_PATTERNS above, that addresses all application requirements and follows HF Spaces compliance standards. 
 
 **Implementation Steps**:
 1. **Analyze** the provided installation commands to identify application type, dependencies, and requirements
