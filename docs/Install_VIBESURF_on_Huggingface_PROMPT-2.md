@@ -1593,7 +1593,7 @@ Analyze the provided CONTEXT_FILES and application installation commands to unde
 </CONTEXT_ANALYSIS>
 
 <APPLICATION_INSTALL>
-The {Dockerfile} currently represents an instance of the vibesurf app that at this moment, runs smoothly without errors, on huggingface spaces with the UI shown in {{VIBESURF_WEB_UI.png}}. Integrate '.env' into the Dockerfile (which discards this:"RUN cp .env.example .env")
+The {Dockerfile} currently represents an instance of the vibesurf app that at this moment, runs smoothly without errors, on huggingface spaces with the UI shown in {{VIBESURF_WEB_UI.png}}. Integrate '.env' into the Dockerfile (which discards this:"RUN cp .env.example .env"). WARNING, DO NOT BREAK CURRENTLY WORKING FUNCTIONALITIES
 </APPLICATION_INSTALL>
 </INPUT_FORMAT>
 
@@ -1615,3 +1615,4 @@ The {Dockerfile} currently represents an instance of the vibesurf app that at th
 
 Let's work this out in a step by step way to be sure we have the right answer.
 </HuggingFace_Spaces_Docker_Expert>
+
