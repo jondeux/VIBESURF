@@ -1,35 +1,29 @@
-# VIBESURF WEB: Complete Production Dockerfile with Integrated Web UI
-# Based on Steel Browser's architecture: API + Web UI in single container
-# Python 3.12-slim base for optimal AI application compatibility
-FROM python:3.12-slim
+# VIBESURF UI: HuggingFace Spaces Dockerfile with Full Browser UI
+# Ubuntu 22.04 base for better desktop environment support
+FROM ubuntu:22.04
 
 # HF SPACES STANDARD: Set environment variables for optimal containerized execution
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    DEBIAN_FRONTEND=noninteractive \
+ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
     LANGUAGE=en_US:en \
     LC_ALL=C.UTF-8 \
     LANG=C.UTF-8
 
+# DISPLAY CONFIGURATION: Set up for VNC-based UI
+ENV DISPLAY=:1 \
+    VNC_PORT=5901 \
+    NOVNC_PORT=7860 \
+    VNC_RESOLUTION=1920x1080 \
+    VNC_COL_DEPTH=24
+
 # VIBESURF CONFIG: Environment variables for VibeSurf configuration
-ENV VIBESURF_BACKEND_PORT=7860 \
+ENV VIBESURF_BACKEND_PORT=9335 \
     BROWSER_USE_LOGGING_LEVEL=info \
     ANONYMIZED_TELEMETRY=false \
     IN_DOCKER=true \
-    BROWSER_USE_CALCULATE_COST=false \
-    VIBESURF_DEBUG=false \
-    # Display configuration for browser automation
-    DISPLAY=:99 \
-    DBUS_SESSION_BUS_ADDRESS=autolaunch: \
-    # Chrome configuration
-    CHROME_BIN=/usr/bin/chromium \
-    CHROME_PATH=/usr/bin/chromium \
-    CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu"
+    VIBESURF_DEBUG=false
 
-# SYSTEM DEPENDENCIES: Install required system packages for browser automation
+# SYSTEM DEPENDENCIES: Install core utilities first
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core system utilities
     git \
@@ -37,1808 +31,125 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gnupg \
     ca-certificates \
+    software-properties-common \
+    apt-transport-https \
+    supervisor \
     unzip \
-    build-essential \
-    pkg-config \
-    # Display and X11 dependencies for headless browser
+    && rm -rf /var/lib/apt/lists/*
+
+# PYTHON 3.12: Add deadsnakes PPA and install Python 3.12
+RUN add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# GOOGLE CHROME: Install using modern method (no deprecated apt-key)
+RUN wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+    apt-get update && \
+    apt-get install -y /tmp/google-chrome.deb && \
+    rm /tmp/google-chrome.deb && \
+    rm -rf /var/lib/apt/lists/*
+
+# DESKTOP ENVIRONMENT: Install VNC and XFCE
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Virtual framebuffer X server (better X11 support than TightVNC)
     xvfb \
+    # VNC Server that connects to existing X display
     x11vnc \
+    # Desktop environment
+    xfce4 \
+    xfce4-goodies \
     dbus-x11 \
-    xauth \
-    # Chromium browser for automation
-    chromium \
-    chromium-driver \
-    # Font support for better rendering
+    x11-xserver-utils \
+    x11-utils \
+    # noVNC for web-based VNC access
+    novnc \
+    websockify \
+    # Window manager and utilities
+    xterm \
+    menu \
+    xfonts-base \
+    xfonts-100dpi \
+    xfonts-75dpi \
+    # Font support
     fonts-liberation \
     fonts-dejavu-core \
     fonts-freefont-ttf \
     fonts-noto-core \
     fonts-noto-color-emoji \
-    fonts-ipafont-gothic \
-    fonts-wqy-zenhei \
-    fonts-thai-tlwg \
-    # Enhanced browser dependencies for stability
-    libnss3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxrandr2 \
-    libxfixes3 \
-    libxcomposite1 \
-    libasound2 \
-    libxdamage1 \
-    libxrender1 \
-    libgbm1 \
-    libxss1 \
-    libxtst6 \
-    libpangocairo-1.0-0 \
-    libcairo-gobject2 \
-    libgtk-3-0 \
-    libgdk-pixbuf-2.0-0 \
-    libdbus-1-3 \
-    libx11-xcb1 \
-    libxcursor1 \
-    libxi6 \
-    libfontconfig1 \
-    libxkbcommon0 \
-    # Additional debugging tools
+    # Process management
     procps \
-    htop \
-    && rm -rf /var/lib/apt/lists/* && \
-    apt-get clean
+    net-tools \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
 
-# HF SPACES STANDARD: Create non-root user with UID 1000 for security compliance
+# HF SPACES STANDARD: Create non-root user with UID 1000
 RUN if ! id -u 1000 >/dev/null 2>&1; then \
-        useradd -m -u 1000 user; \
+        useradd -m -u 1000 -s /bin/bash user; \
     else \
         if ! id -u user >/dev/null 2>&1; then \
             usermod -d /home/user -m $(id -un 1000) && \
             usermod -l user $(id -un 1000); \
         fi; \
-    fi
+    fi && \
+    mkdir -p /home/user/.vnc && \
+    chown -R user:user /home/user
 
 USER user
 ENV HOME=/home/user \
-    PATH=/home/user/.venv/bin:/home/user/.local/bin:$PATH
+    PATH=/home/user/.local/bin:$PATH
 WORKDIR $HOME/app
 
-# COPY UV: Advanced dependency management
+# COPY UV: Advanced Python dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uv /usr/local/bin/uv
 COPY --from=ghcr.io/astral-sh/uv:latest --chown=1000:1000 /uvx /usr/local/bin/uvx
 
 # SOURCE CODE: Clone VibeSurf repository
-RUN git clone https://github.com/vvincent1234/VibeSurf.git . && \
+RUN git clone https://github.com/vibesurf-ai/VibeSurf.git . && \
     echo "VibeSurf repository cloned successfully"
 
-# ENHANCED DIRECTORY STRUCTURE: Create comprehensive directory structure with proper permissions
+# DIRECTORY STRUCTURE: Create necessary directories
 RUN mkdir -p $HOME/app/data \
              $HOME/app/data/profiles \
              $HOME/app/data/workspace \
              $HOME/app/data/database \
              $HOME/app/logs \
-             $HOME/app/tmp \
-             $HOME/app/web_ui \
-             $HOME/.config/vibesurf \
-             $HOME/.config/chromium && \
-    chmod -R 777 $HOME/app/data $HOME/app/logs $HOME/app/tmp $HOME/app/web_ui $HOME/.config
+             $HOME/.vnc \
+             $HOME/.config/google-chrome \
+             $HOME/Desktop && \
+    chmod -R 777 $HOME/app/data $HOME/app/logs $HOME/.config
 
-# DEPENDENCY MANAGEMENT: Install VibeSurf dependencies using uv
-RUN uv venv --seed $HOME/.venv && \
+# DEPENDENCY MANAGEMENT: Install VibeSurf dependencies
+RUN /usr/local/bin/uv venv --python 3.12 --seed $HOME/.venv && \
     /usr/local/bin/uv pip install --python $HOME/.venv/bin/python --no-cache -e . && \
     echo "VibeSurf dependencies installed successfully"
 
-# CONFIGURATION: Create default .env file from example
-RUN cp .env.example .env && \
-    echo "Default environment file created"
-
-# WEB UI: Create standalone web interface (NOT Chrome extension)
-# This is a simple SPA that uses VibeSurf's REST API via fetch()
-RUN mkdir -p $HOME/app/web_ui && cat > $HOME/app/web_ui/index.html <<'HTMLEOF'
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VibeSurf Pro - Enhanced AI Browser Automation</title>
-    <link rel="stylesheet" href="/web_ui/style.css">
-</head>
-<body>
-    <!-- Tab Navigation -->
-    <nav class="nav-tabs">
-        <button class="tab-btn active" data-tab="tasks">🎯 Tasks</button>
-        <button class="tab-btn" data-tab="history">📜 History</button>
-        <button class="tab-btn" data-tab="browser">🌐 Browser</button>
-        <button class="tab-btn" data-tab="settings">⚙️ Settings</button>
-    </nav>
-
-    <div class="container">
-        <header>
-            <h1>🌊 VibeSurf Pro</h1>
-            <p>Enhanced AI Browser Automation with Full Control</p>
-            <div class="status" id="status">
-                <span class="status-indicator" id="status-indicator"></span>
-                <span id="status-text">Connecting...</span>
-            </div>
-        </header>
-
-        <!-- TASKS TAB -->
-        <div id="tab-tasks" class="tab-content active">
-            <section class="task-input">
-                <h2>Submit New Task</h2>
-                
-                <!-- Feature 4: LLM Profile Selector -->
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="llm-profile-select">LLM Profile:</label>
-                        <div class="input-with-button">
-                            <select id="llm-profile-select" class="form-control">
-                                <option value="default">Loading...</option>
-                            </select>
-                            <button onclick="refreshLLMProfiles()" class="btn-icon" title="Refresh Profiles">🔄</button>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="agent-mode-select">Agent Mode:</label>
-                        <select id="agent-mode-select" class="form-control">
-                            <option value="thinking">Thinking (Detailed reasoning)</option>
-                            <option value="no-thinking">No Thinking (Fast)</option>
-                            <option value="flash">Flash (Ultra fast)</option>
-                        </select>
-                    </div>
-                </div>
-
-                <textarea 
-                    id="task-input" 
-                    placeholder="Enter your task here... (e.g., 'Search for latest AI news and summarize')"
-                    rows="4"
-                ></textarea>
-                
-                <!-- Feature 1: File Upload -->
-                <div class="file-upload">
-                    <input type="file" id="file-input" multiple>
-                    <button onclick="uploadFiles()" class="btn-secondary" id="upload-btn">
-                        📎 Upload Files
-                    </button>
-                    <div id="uploaded-files-list"></div>
-                </div>
-
-                <div class="controls">
-                    <button id="submit-btn" class="btn-primary" onclick="submitTask()">
-                        ▶️ Submit Task
-                    </button>
-                    <button id="pause-btn" class="btn-secondary" onclick="pauseTask()" disabled>
-                        ⏸️ Pause
-                    </button>
-                    <button id="resume-btn" class="btn-secondary" onclick="resumeTask()" disabled>
-                        ▶️ Resume
-                    </button>
-                    <button id="stop-btn" class="btn-danger" onclick="stopTask()" disabled>
-                        ⏹️ Stop
-                    </button>
-                </div>
-            </section>
-
-            <!-- Feature 3: Detailed Status -->
-            <section class="task-status">
-                <h2>Task Status</h2>
-                <div id="detailed-status" class="status-container">
-                    <p class="placeholder">No active task</p>
-                </div>
-            </section>
-
-            <section class="results">
-                <h2>Activity Log</h2>
-                <div id="activity-log" class="log-container"></div>
-            </section>
-
-            <section class="results">
-                <h2>Results</h2>
-                <div id="results" class="results-container"></div>
-            </section>
-        </div>
-
-        <!-- Feature 2: HISTORY TAB -->
-        <div id="tab-history" class="tab-content">
-            <section>
-                <h2>Task History</h2>
-                <div class="history-filters">
-                    <select id="session-filter" class="form-control" onchange="filterHistory()">
-                        <option value="current">Current Session</option>
-                        <option value="all">All Sessions</option>
-                    </select>
-                    <button onclick="loadHistory()" class="btn-secondary">🔄 Refresh</button>
-                    <span id="history-count" class="info-badge">0 tasks</span>
-                </div>
-                <div id="history-list" class="history-container"></div>
-            </section>
-        </div>
-
-        <!-- Feature 5: BROWSER TAB -->
-        <div id="tab-browser" class="tab-content">
-            <section>
-                <h2>Browser Control</h2>
-                <div class="browser-controls">
-                    <button onclick="refreshBrowserTabs()" class="btn-primary">🔄 Refresh Tabs</button>
-                    <button onclick="getActiveTab()" class="btn-secondary">📍 Show Active Tab</button>
-                    <span id="tabs-count" class="info-badge">0 tabs</span>
-                </div>
-                <div id="browser-tabs" class="browser-tabs-container"></div>
-            </section>
-        </div>
-
-        <!-- Feature 6: SETTINGS TAB -->
-        <div id="tab-settings" class="tab-content">
-            <section>
-                <h2>Settings & Configuration</h2>
-                
-                <div class="settings-section">
-                    <h3>🤖 LLM Profiles</h3>
-                    <div id="llm-profiles-list" class="profiles-list"></div>
-                    <button onclick="showCreateProfileModal()" class="btn-primary">➕ Create New Profile</button>
-                </div>
-
-                <div class="settings-section">
-                    <h3>🔌 Available Providers</h3>
-                    <div id="providers-list" class="providers-list"></div>
-                    <button onclick="loadProviders()" class="btn-secondary">🔄 Load Providers</button>
-                </div>
-
-                <div class="settings-section">
-                    <h3>📁 Files</h3>
-                    <div id="files-list" class="files-list"></div>
-                    <button onclick="loadFiles()" class="btn-secondary">🔄 Load Files</button>
-                </div>
-
-                <div class="settings-section">
-                    <h3>ℹ️ About</h3>
-                    <p><strong>VibeSurf Pro</strong> - Enhanced Web UI v2.0</p>
-                    <p><strong>Features:</strong></p>
-                    <ul>
-                        <li>✅ File Upload & Management</li>
-                        <li>✅ Complete Task History</li>
-                        <li>✅ Detailed Progress Status</li>
-                        <li>✅ LLM Profile Selection</li>
-                        <li>✅ Browser Tab Control</li>
-                        <li>✅ Full Settings Panel</li>
-                    </ul>
-                    <div style="margin-top: 15px;">
-                        <a href="/docs" target="_blank" class="btn-secondary">📚 API Documentation</a>
-                        <a href="https://github.com/vibesurf-ai/VibeSurf" target="_blank" class="btn-secondary">💻 GitHub</a>
-                    </div>
-                </div>
-            </section>
-        </div>
-
-        <footer>
-            <p>VibeSurf Pro v2.0 - Enhanced Edition | <a href="/docs" target="_blank">API Docs</a></p>
-        </footer>
-    </div>
-
-    <!-- MODAL: Create LLM Profile -->
-    <div id="create-profile-modal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeCreateProfileModal()">&times;</span>
-            <h2>Create LLM Profile</h2>
-            <form id="create-profile-form" onsubmit="createLLMProfile(event)">
-                <div class="form-group">
-                    <label>Profile Name:</label>
-                    <input type="text" id="profile-name" required placeholder="e.g., my-gpt4-profile">
-                </div>
-                <div class="form-group">
-                    <label>Provider:</label>
-                    <select id="profile-provider" onchange="loadProviderModels()" required>
-                        <option value="">Select Provider</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Model:</label>
-                    <select id="profile-model" required>
-                        <option value="">Select Model First</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>API Endpoint (optional):</label>
-                    <input type="text" id="profile-endpoint" placeholder="Leave empty for default">
-                </div>
-                <div class="form-group">
-                    <label>API Key (optional):</label>
-                    <input type="password" id="profile-api-key" placeholder="Leave empty to use environment variable">
-                </div>
-                <button type="submit" class="btn-primary">✅ Create Profile</button>
-                <button type="button" onclick="closeCreateProfileModal()" class="btn-secondary">❌ Cancel</button>
-            </form>
-        </div>
-    </div>
-
-    <!-- MODAL: Task Details -->
-    <div id="task-details-modal" class="modal">
-        <div class="modal-content large">
-            <span class="close" onclick="closeTaskDetailsModal()">&times;</span>
-            <h2>Task Details</h2>
-            <div id="task-details-content"></div>
-        </div>
-    </div>
-
-    <script src="/web_ui/app.js"></script>
-</body>
-</html>
-
-HTMLEOF
-
-# WEB UI CSS
-RUN cat > $HOME/app/web_ui/style.css <<'CSSEOF'
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    min-height: 100vh;
-    padding: 0;
-}
-
-/* Tab Navigation */
-.nav-tabs {
-    background: #fff;
-    display: flex;
-    border-bottom: 2px solid #e0e0e0;
-    padding: 0;
-}
-
-.tab-btn {
-    flex: 1;
-    padding: 15px 20px;
-    border: none;
-    background: white;
-    cursor: pointer;
-    font-size: 1em;
-    transition: all 0.3s;
-    border-bottom: 3px solid transparent;
-}
-
-.tab-btn:hover {
-    background: #f5f5f5;
-}
-
-.tab-btn.active {
-    background: white;
-    border-bottom-color: #667eea;
-    color: #667eea;
-    font-weight: 600;
-}
-
-.tab-content {
-    display: none;
-}
-
-.tab-content.active {
-    display: block;
-}
-
-/* Container */
-.container {
-    max-width: 1400px;
-    margin: 0 auto;
-    background: white;
-    min-height: calc(100vh - 50px);
-}
-
-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 30px;
-    text-align: center;
-}
-
-header h1 {
-    font-size: 2.5em;
-    margin-bottom: 10px;
-}
-
-header p {
-    opacity: 0.9;
-    font-size: 1.1em;
-}
-
-.status {
-    margin-top: 15px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-}
-
-.status-indicator {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #ffd700;
-    animation: pulse 2s infinite;
-}
-
-.status-indicator.connected {
-    background: #4caf50;
-}
-
-.status-indicator.error {
-    background: #f44336;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-main, section {
-    padding: 20px 30px;
-}
-
-section {
-    margin-bottom: 20px;
-}
-
-h2 {
-    color: #333;
-    margin-bottom: 15px;
-    font-size: 1.5em;
-}
-
-h3 {
-    color: #555;
-    margin-bottom: 10px;
-    font-size: 1.2em;
-}
-
-/* Form Controls */
-.form-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 15px;
-    margin-bottom: 15px;
-}
-
-.form-group {
-    margin-bottom: 15px;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: 500;
-    color: #555;
-}
-
-.form-control {
-    width: 100%;
-    padding: 10px;
-    border: 2px solid #e0e0e0;
-    border-radius: 6px;
-    font-size: 1em;
-    transition: border-color 0.3s;
-}
-
-.form-control:focus {
-    outline: none;
-    border-color: #667eea;
-}
-
-.input-with-button {
-    display: flex;
-    gap: 5px;
-}
-
-.input-with-button .form-control {
-    flex: 1;
-}
-
-.btn-icon {
-    padding: 10px;
-    min-width: 45px;
-}
-
-textarea {
-    width: 100%;
-    padding: 15px;
-    border: 2px solid #e0e0e0;
-    border-radius: 8px;
-    font-size: 1em;
-    font-family: inherit;
-    resize: vertical;
-    transition: border-color 0.3s;
-    margin-bottom: 15px;
-}
-
-textarea:focus {
-    outline: none;
-    border-color: #667eea;
-}
-
-/* File Upload */
-.file-upload {
-    margin: 15px 0;
-}
-
-#file-input {
-    margin-bottom: 10px;
-}
-
-#uploaded-files-list {
-    margin-top: 10px;
-}
-
-.uploaded-file {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 12px;
-    background: #f5f5f5;
-    border-radius: 6px;
-    margin-bottom: 8px;
-}
-
-.uploaded-file button {
-    padding: 4px 8px;
-    font-size: 0.9em;
-}
-
-/* Buttons */
-.controls {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-}
-
-button {
-    padding: 12px 24px;
-    border: none;
-    border-radius: 6px;
-    font-size: 1em;
-    cursor: pointer;
-    transition: all 0.3s;
-    font-weight: 500;
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-}
-
-.btn-secondary {
-    background: #e0e0e0;
-    color: #333;
-}
-
-.btn-secondary:hover:not(:disabled) {
-    background: #d0d0d0;
-}
-
-.btn-danger {
-    background: #f44336;
-    color: white;
-}
-
-.btn-danger:hover:not(:disabled) {
-    background: #d32f2f;
-}
-
-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-/* Status & Progress */
-.status-container, .task-status {
-    background: #f9f9f9;
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 20px;
-}
-
-.status-card {
-    background: white;
-    padding: 15px;
-    border-radius: 8px;
-    border-left: 4px solid #667eea;
-}
-
-.status-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 8px 0;
-    border-bottom: 1px solid #f0f0f0;
-}
-
-.status-row:last-child {
-    border-bottom: none;
-}
-
-.status-badge {
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 0.9em;
-    font-weight: 500;
-}
-
-.status-badge.running, .status-badge.executing {
-    background: #2196f3;
-    color: white;
-}
-
-.status-badge.completed, .status-badge.finished {
-    background: #4caf50;
-    color: white;
-}
-
-.status-badge.failed, .status-badge.error {
-    background: #f44336;
-    color: white;
-}
-
-.status-badge.paused {
-    background: #ff9800;
-    color: white;
-}
-
-.progress-bar {
-    width: 100%;
-    height: 20px;
-    background: #e0e0e0;
-    border-radius: 10px;
-    overflow: hidden;
-    margin: 10px 0;
-}
-
-.progress-fill {
-    height: 100%;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    transition: width 0.5s ease;
-}
-
-/* Activity Log & Results */
-.log-container, .results-container {
-    background: #f5f5f5;
-    border-radius: 8px;
-    padding: 20px;
-    min-height: 200px;
-    max-height: 400px;
-    overflow-y: auto;
-    font-family: 'Courier New', monospace;
-    font-size: 0.9em;
-}
-
-.log-entry {
-    padding: 8px;
-    margin-bottom: 8px;
-    background: white;
-    border-radius: 4px;
-    border-left: 4px solid #667eea;
-}
-
-.log-entry.error {
-    border-left-color: #f44336;
-}
-
-.log-entry.success {
-    border-left-color: #4caf50;
-}
-
-.log-timestamp {
-    color: #666;
-    font-size: 0.85em;
-    margin-right: 10px;
-}
-
-.placeholder {
-    text-align: center;
-    color: #999;
-    padding: 40px;
-}
-
-/* History */
-.history-filters {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-    align-items: center;
-}
-
-.history-container {
-    max-height: 600px;
-    overflow-y: auto;
-}
-
-.history-item {
-    background: white;
-    padding: 15px;
-    margin-bottom: 10px;
-    border-radius: 8px;
-    border-left: 4px solid #667eea;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-}
-
-.history-header {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 10px;
-    align-items: center;
-}
-
-.task-id {
-    font-family: monospace;
-    background: #f0f0f0;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 0.9em;
-}
-
-.task-time {
-    font-size: 0.9em;
-    color: #666;
-}
-
-.history-body {
-    margin: 10px 0;
-}
-
-.history-body p {
-    margin-bottom: 5px;
-}
-
-.history-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 10px;
-}
-
-.history-actions button {
-    padding: 6px 12px;
-    font-size: 0.9em;
-}
-
-/* Browser Tabs */
-.browser-controls {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-    align-items: center;
-}
-
-.browser-tabs-container {
-    max-height: 600px;
-    overflow-y: auto;
-}
-
-.browser-tab {
-    background: white;
-    padding: 15px;
-    margin-bottom: 10px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    transition: all 0.3s;
-}
-
-.browser-tab:hover {
-    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-    transform: translateY(-2px);
-}
-
-.browser-tab.active {
-    border-left: 4px solid #4caf50;
-}
-
-.tab-index {
-    width: 35px;
-    height: 35px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    flex-shrink: 0;
-}
-
-.tab-info {
-    flex: 1;
-}
-
-.tab-title {
-    font-weight: 600;
-    margin-bottom: 4px;
-}
-
-.tab-url {
-    font-size: 0.9em;
-    color: #666;
-    word-break: break-all;
-}
-
-.active-badge {
-    background: #4caf50;
-    color: white;
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 0.85em;
-    font-weight: 500;
-}
-
-/* Settings */
-.settings-section {
-    background: #f9f9f9;
-    padding: 20px;
-    margin-bottom: 20px;
-    border-radius: 8px;
-}
-
-.settings-section ul {
-    margin-left: 20px;
-    line-height: 1.8;
-}
-
-.profile-item, .provider-item, .file-item {
-    padding: 15px;
-    background: white;
-    margin-bottom: 10px;
-    border-radius: 6px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-}
-
-.profile-info, .provider-info {
-    flex: 1;
-}
-
-.profile-info strong {
-    display: block;
-    margin-bottom: 4px;
-    color: #333;
-}
-
-.profile-info span, .provider-info span {
-    color: #666;
-    font-size: 0.9em;
-}
-
-.profile-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.profile-actions button {
-    padding: 6px 12px;
-    font-size: 0.9em;
-}
-
-.profiles-list, .providers-list, .files-list {
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-/* Info Badge */
-.info-badge {
-    background: #667eea;
-    color: white;
-    padding: 6px 12px;
-    border-radius: 12px;
-    font-size: 0.9em;
-    font-weight: 500;
-}
-
-/* Modals */
-.modal {
-    display: none;
-    position: fixed;
-    z-index: 1000;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0,0,0,0.6);
-    align-items: center;
-    justify-content: center;
-}
-
-.modal.active {
-    display: flex;
-}
-
-.modal-content {
-    background: white;
-    padding: 30px;
-    border-radius: 12px;
-    max-width: 500px;
-    width: 90%;
-    max-height: 80vh;
-    overflow-y: auto;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-}
-
-.modal-content.large {
-    max-width: 800px;
-}
-
-.modal-content h2 {
-    margin-bottom: 20px;
-}
-
-.close {
-    float: right;
-    font-size: 28px;
-    font-weight: bold;
-    cursor: pointer;
-    color: #999;
-    transition: color 0.3s;
-}
-
-.close:hover {
-    color: #333;
-}
-
-/* Footer */
-footer {
-    background: #f5f5f5;
-    padding: 20px;
-    text-align: center;
-    color: #666;
-    border-top: 1px solid #e0e0e0;
-}
-
-footer a {
-    color: #667eea;
-    text-decoration: none;
-    margin: 0 10px;
-}
-
-footer a:hover {
-    text-decoration: underline;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-    body {
-        padding: 0;
-    }
-    
-    header h1 {
-        font-size: 2em;
-    }
-    
-    .form-row {
-        grid-template-columns: 1fr;
-    }
-    
-    .controls, .history-filters, .browser-controls {
-        flex-direction: column;
-    }
-    
-    button {
-        width: 100%;
-    }
-    
-    .tab-btn {
-        font-size: 0.9em;
-        padding: 12px 10px;
-    }
-    
-    .modal-content {
-        width: 95%;
-        padding: 20px;
-    }
-    
-    .history-actions {
-        flex-direction: column;
-    }
-    
-    .profile-item, .browser-tab {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-    
-    .profile-actions {
-        width: 100%;
-        margin-top: 10px;
-    }
-}
-
-/* Scrollbar Styling */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: #f1f1f1;
-}
-
-::-webkit-scrollbar-thumb {
-    background: #888;
-    border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: #555;
-}
-
-CSSEOF
-
-# WEB UI JavaScript
-RUN cat > $HOME/app/web_ui/app.js <<'JSEOF'
-// VibeSurf Pro - Enhanced Web UI v2.0
-// Complete implementation with all 6 features
-
-// Global State
-let currentSessionId = null;
-let currentTaskId = null;
-let activityPolling = null;
-let statusPolling = null;
-let uploadedFilePaths = [];
-let availableProfiles = [];
-let availableProviders = [];
-
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', async () => {
-    await checkBackendStatus();
-    await generateSessionId();
-    await loadLLMProfiles();
-    setupTabNavigation();
-    setupFileUpload();
-    
-    // Start polling
-    setInterval(pollDetailedStatus, 3000);
-});
-
-// ============= FEATURE: TAB NAVIGATION =============
-function setupTabNavigation() {
-    const tabBtns = document.querySelectorAll('.tab-btn');
-    tabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const tabName = btn.dataset.tab;
-            switchTab(tabName);
-        });
-    });
-}
-
-function switchTab(tabName) {
-    // Update buttons
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.dataset.tab === tabName) btn.classList.add('active');
-    });
-    
-    // Update content
-    document.querySelectorAll('.tab-content').forEach(content => {
-        content.classList.remove('active');
-    });
-    const activeTab = document.getElementById('tab-' + tabName);
-    if (activeTab) activeTab.classList.add('active');
-    
-    // Load tab-specific data
-    if (tabName === 'history') loadHistory();
-    if (tabName === 'browser') refreshBrowserTabs();
-    if (tabName === 'settings') loadSettings();
-}
-
-// ============= CORE: BACKEND CONNECTION =============
-async function checkBackendStatus() {
-    try {
-        const response = await fetch('/health');
-        if (response.ok) {
-            updateStatus('connected', 'Backend Connected');
-        } else {
-            updateStatus('error', 'Backend Error');
-        }
-    } catch (error) {
-        updateStatus('error', 'Backend Offline');
-        console.error('Health check failed:', error);
-    }
-}
-
-async function generateSessionId() {
-    try {
-        const response = await fetch('/generate-session-id');
-        const data = await response.json();
-        currentSessionId = data.session_id;
-        addLog('Session initialized: ' + currentSessionId);
-    } catch (error) {
-        addLog('Failed to generate session ID', 'error');
-        console.error('Session generation failed:', error);
-    }
-}
-
-// ============= FEATURE 1: FILE UPLOAD =============
-function setupFileUpload() {
-    const fileInput = document.getElementById('file-input');
-    fileInput.addEventListener('change', () => {
-        const files = Array.from(fileInput.files);
-        if (files.length > 0) {
-            addLog(\`\${files.length} file(s) selected for upload\`);
-        }
-    });
-}
-
-async function uploadFiles() {
-    const fileInput = document.getElementById('file-input');
-    const files = fileInput.files;
-    
-    if (files.length === 0) {
-        alert('Please select files first');
-        return;
-    }
-    
-    const uploadBtn = document.getElementById('upload-btn');
-    uploadBtn.disabled = true;
-    uploadBtn.textContent = '⏳ Uploading...';
-    
-    try {
-        const formData = new FormData();
-        for (const file of files) {
-            formData.append('files', file);
-        }
-        
-        const response = await fetch('/api/files/upload', {
-            method: 'POST',
-            body: formData
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            uploadedFilePaths = data.file_paths || [];
-            
-            addLog(\`Uploaded \${files.length} file(s) successfully\`, 'success');
-            displayUploadedFiles(data.files || []);
-            fileInput.value = ''; // Clear input
-        } else {
-            throw new Error(await response.text());
-        }
-    } catch (error) {
-        addLog('File upload failed: ' + error.message, 'error');
-    } finally {
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = '📎 Upload Files';
-    }
-}
-
-function displayUploadedFiles(files) {
-    const container = document.getElementById('uploaded-files-list');
-    if (files.length === 0) {
-        container.innerHTML = '';
-        return;
-    }
-    
-    container.innerHTML = files.map(file => \`
-        <div class="uploaded-file">
-            <span>✓ \${file.filename || file.file_id}</span>
-            <button onclick="deleteFile('\${file.file_id}')" class="btn-danger">🗑️</button>
-        </div>
-    \`).join('');
-}
-
-async function deleteFile(fileId) {
-    try {
-        const response = await fetch(\`/api/files/\${fileId}\`, { method: 'DELETE' });
-        if (response.ok) {
-            addLog('File deleted', 'success');
-            // Reload files
-            const fileInput = document.getElementById('file-input');
-            fileInput.value = '';
-            document.getElementById('uploaded-files-list').innerHTML = '';
-            uploadedFilePaths = [];
-        }
-    } catch (error) {
-        addLog('Delete failed: ' + error.message, 'error');
-    }
-}
-
-// ============= FEATURE 4: LLM PROFILE SELECTOR =============
-async function loadLLMProfiles() {
-    try {
-        const response = await fetch('/api/config/llm-profiles');
-        const profiles = await response.json();
-        availableProfiles = profiles;
-        
-        const select = document.getElementById('llm-profile-select');
-        select.innerHTML = profiles.map(p => 
-            \`<option value="\${p.profile_name}">\${p.profile_name}</option>\`
-        ).join('');
-        
-        // Get default
-        try {
-            const defaultResp = await fetch('/api/config/llm-profiles/default/current');
-            if (defaultResp.ok) {
-                const def = await defaultResp.json();
-                select.value = def.profile_name;
-            }
-        } catch (e) {}
-    } catch (error) {
-        console.error('Failed to load profiles:', error);
-        document.getElementById('llm-profile-select').innerHTML = 
-            '<option value="default">default</option>';
-    }
-}
-
-async function refreshLLMProfiles() {
-    await loadLLMProfiles();
-    addLog('LLM profiles refreshed');
-}
-
-// ============= CORE: TASK SUBMISSION =============
-async function submitTask() {
-    const taskInput = document.getElementById('task-input');
-    const taskDescription = taskInput.value.trim();
-    
-    if (!taskDescription) {
-        alert('Please enter a task');
-        return;
-    }
-    
-    if (!currentSessionId) await generateSessionId();
-    
-    const submitBtn = document.getElementById('submit-btn');
-    submitBtn.disabled = true;
-    submitBtn.textContent = '⏳ Submitting...';
-    
-    try {
-        const llmProfileName = document.getElementById('llm-profile-select').value;
-        const agentMode = document.getElementById('agent-mode-select').value;
-        
-        const taskRequest = {
-            session_id: currentSessionId,
-            task_description: taskDescription,
-            llm_profile_name: llmProfileName,
-            agent_mode: agentMode
-        };
-        
-        if (uploadedFilePaths.length > 0) {
-            taskRequest.upload_files_path = uploadedFilePaths.join(',');
-        }
-        
-        const response = await fetch('/api/tasks/submit', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(taskRequest)
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            currentTaskId = data.task_id;
-            addLog('Task submitted successfully!', 'success');
-            addLog('Task ID: ' + currentTaskId);
-            
-            taskInput.value = '';
-            uploadedFilePaths = [];
-            document.getElementById('uploaded-files-list').innerHTML = '';
-            
-            document.getElementById('pause-btn').disabled = false;
-            document.getElementById('stop-btn').disabled = false;
-            
-            startActivityPolling();
-        } else {
-            const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
-            addLog('Task failed: ' + (errorData.detail || errorData.message), 'error');
-        }
-    } catch (error) {
-        addLog('Error: ' + error.message, 'error');
-    } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = '▶️ Submit Task';
-    }
-}
-
-async function pauseTask() {
-    await sendControl('/api/tasks/pause', 'Task paused');
-    document.getElementById('resume-btn').disabled = false;
-    document.getElementById('pause-btn').disabled = true;
-}
-
-async function resumeTask() {
-    await sendControl('/api/tasks/resume', 'Task resumed');
-    document.getElementById('pause-btn').disabled = false;
-    document.getElementById('resume-btn').disabled = true;
-}
-
-async function stopTask() {
-    await sendControl('/api/tasks/stop', 'Task stopped');
-    stopActivityPolling();
-    document.getElementById('pause-btn').disabled = true;
-    document.getElementById('resume-btn').disabled = true;
-    document.getElementById('stop-btn').disabled = true;
-}
-
-async function sendControl(endpoint, successMessage) {
-    try {
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason: successMessage })
-        });
-        
-        if (response.ok) {
-            addLog(successMessage, 'success');
-        } else {
-            const errorData = await response.json().catch(() => ({ detail: 'Failed' }));
-            addLog('Control failed: ' + (errorData.detail || ''), 'error');
-        }
-    } catch (error) {
-        addLog('Error: ' + error.message, 'error');
-    }
-}
-
-// ============= FEATURE 3: DETAILED STATUS =============
-async function pollDetailedStatus() {
-    if (!currentTaskId) return;
-    
-    try {
-        const response = await fetch('/api/tasks/detailed-status');
-        if (response.ok) {
-            const status = await response.json();
-            updateDetailedStatus(status);
-        }
-    } catch (error) {
-        console.error('Status polling error:', error);
-    }
-}
-
-function updateDetailedStatus(status) {
-    const container = document.getElementById('detailed-status');
-    
-    if (!status || !status.has_active_task) {
-        container.innerHTML = '<p class="placeholder">No active task</p>';
-        return;
-    }
-    
-    const progress = status.progress || 0;
-    const currentAction = status.current_action || 'Processing...';
-    
-    container.innerHTML = \`
-        <div class="status-card">
-            <div class="status-row">
-                <span>Task ID:</span>
-                <span>\${status.task_id?.slice(0, 8) || 'N/A'}</span>
-            </div>
-            <div class="status-row">
-                <span>Status:</span>
-                <span class="status-badge \${status.status}">\${status.status}</span>
-            </div>
-            <div class="status-row">
-                <span>Progress:</span>
-                <span>\${progress}%</span>
-            </div>
-            <div class="progress-bar">
-                <div class="progress-fill" style="width: \${progress}%"></div>
-            </div>
-            <div class="status-row">
-                <span>Current Action:</span>
-                <span>\${currentAction}</span>
-            </div>
-        </div>
-    \`;
-}
-
-// ============= ACTIVITY POLLING =============
-function startActivityPolling() {
-    if (activityPolling) return;
-    activityPolling = setInterval(async () => {
-        try {
-            const response = await fetch(\`/api/activity/sessions/\${currentSessionId}/latest_activity\`);
-            if (response.ok) {
-                const activities = await response.json();
-                if (activities && activities.length > 0) {
-                    activities.forEach(activity => {
-                        addLog(\`[\${activity.agent_name}] \${activity.action}: \${activity.result || ''}\`);
-                    });
-                }
-            }
-        } catch (error) {
-            console.error('Activity polling error:', error);
-        }
-    }, 2000);
-}
-
-function stopActivityPolling() {
-    if (activityPolling) {
-        clearInterval(activityPolling);
-        activityPolling = null;
-    }
-}
-
-// ============= FEATURE 2: TASK HISTORY =============
-async function loadHistory() {
-    try {
-        const sessionFilter = document.getElementById('session-filter').value;
-        let tasks = [];
-        
-        if (sessionFilter === 'current') {
-            const response = await fetch(\`/api/activity/sessions/\${currentSessionId}/tasks\`);
-            tasks = await response.json();
-        } else {
-            const response = await fetch('/api/activity/tasks');
-            tasks = await response.json();
-        }
-        
-        displayHistory(tasks);
-        document.getElementById('history-count').textContent = \`\${tasks.length} tasks\`;
-    } catch (error) {
-        addLog('Failed to load history: ' + error.message, 'error');
-    }
-}
-
-function displayHistory(tasks) {
-    const container = document.getElementById('history-list');
-    
-    if (!tasks || tasks.length === 0) {
-        container.innerHTML = '<p class="placeholder">No task history</p>';
-        return;
-    }
-    
-    container.innerHTML = tasks.map(task => \`
-        <div class="history-item">
-            <div class="history-header">
-                <span class="task-id">\${task.task_id.slice(0, 8)}</span>
-                <span class="status-badge \${task.status}">\${task.status}</span>
-                <span class="task-time">\${new Date(task.created_at).toLocaleString()}</span>
-            </div>
-            <div class="history-body">
-                <p><strong>Task:</strong> \${task.task_description || 'N/A'}</p>
-                \${task.result ? \`<p><strong>Result:</strong> \${task.result.slice(0, 200)}...</p>\` : ''}
-            </div>
-            <div class="history-actions">
-                <button onclick="viewTaskDetails('\${task.task_id}')" class="btn-secondary">📋 Details</button>
-            </div>
-        </div>
-    \`).join('');
-}
-
-function filterHistory() {
-    loadHistory();
-}
-
-async function viewTaskDetails(taskId) {
-    try {
-        const response = await fetch(\`/api/activity/\${taskId}\`);
-        const task = await response.json();
-        
-        document.getElementById('task-details-content').innerHTML = \`
-            <pre>\${JSON.stringify(task, null, 2)}</pre>
-        \`;
-        document.getElementById('task-details-modal').classList.add('active');
-    } catch (error) {
-        alert('Failed to load task details: ' + error.message);
-    }
-}
-
-function closeTaskDetailsModal() {
-    document.getElementById('task-details-modal').classList.remove('active');
-}
-
-// ============= FEATURE 5: BROWSER TAB VIEWER =============
-async function refreshBrowserTabs() {
-    try {
-        const response = await fetch('/api/browser/all-tabs');
-        const tabs = await response.json();
-        
-        displayBrowserTabs(tabs.tabs || tabs || []);
-        document.getElementById('tabs-count').textContent = \`\${(tabs.tabs || tabs || []).length} tabs\`;
-    } catch (error) {
-        addLog('Failed to get browser tabs: ' + error.message, 'error');
-        document.getElementById('browser-tabs').innerHTML = 
-            '<p class="placeholder">Failed to load tabs. Browser may not be running.</p>';
-    }
-}
-
-function displayBrowserTabs(tabs) {
-    const container = document.getElementById('browser-tabs');
-    
-    if (!tabs || tabs.length === 0) {
-        container.innerHTML = '<p class="placeholder">No browser tabs open</p>';
-        return;
-    }
-    
-    container.innerHTML = tabs.map((tab, index) => \`
-        <div class="browser-tab \${tab.is_active ? 'active' : ''}">
-            <div class="tab-index">\${index + 1}</div>
-            <div class="tab-info">
-                <div class="tab-title">\${tab.title || 'Untitled'}</div>
-                <div class="tab-url">\${tab.url || 'about:blank'}</div>
-            </div>
-            \${tab.is_active ? '<span class="active-badge">Active</span>' : ''}
-        </div>
-    \`).join('');
-}
-
-async function getActiveTab() {
-    try {
-        const response = await fetch('/api/browser/active-tab');
-        const tab = await response.json();
-        addLog(\`Active tab: \${tab.title || 'Unknown'} (\${tab.url || 'N/A'})\`, 'success');
-    } catch (error) {
-        addLog('Failed to get active tab: ' + error.message, 'error');
-    }
-}
-
-// ============= FEATURE 6: SETTINGS PANEL =============
-async function loadSettings() {
-    await loadLLMProfilesList();
-    await loadProviders();
-    await loadFiles();
-}
-
-async function loadLLMProfilesList() {
-    try {
-        const response = await fetch('/api/config/llm-profiles');
-        const profiles = await response.json();
-        
-        const container = document.getElementById('llm-profiles-list');
-        container.innerHTML = profiles.map(profile => \`
-            <div class="profile-item">
-                <div class="profile-info">
-                    <strong>\${profile.profile_name}</strong>
-                    <span>\${profile.model_name || 'Unknown Model'}</span>
-                </div>
-                <div class="profile-actions">
-                    <button onclick="deleteProfile('\${profile.profile_name}')" class="btn-danger">🗑️ Delete</button>
-                </div>
-            </div>
-        \`).join('');
-    } catch (error) {
-        console.error('Failed to load profiles list:', error);
-    }
-}
-
-async function loadProviders() {
-    try {
-        const response = await fetch('/api/config/providers');
-        const providers = await response.json();
-        availableProviders = providers;
-        
-        const container = document.getElementById('providers-list');
-        container.innerHTML = Object.entries(providers).map(([name, info]) => \`
-            <div class="provider-item">
-                <div class="provider-info">
-                    <strong>\${name}</strong>
-                    <span>\${info.endpoint || 'N/A'}</span>
-                </div>
-            </div>
-        \`).join('');
-        
-        // Also populate modal dropdown
-        const providerSelect = document.getElementById('profile-provider');
-        providerSelect.innerHTML = '<option value="">Select Provider</option>' +
-            Object.keys(providers).map(name => \`<option value="\${name}">\${name}</option>\`).join('');
-    } catch (error) {
-        console.error('Failed to load providers:', error);
-    }
-}
-
-async function loadFiles() {
-    try {
-        const response = await fetch('/api/files');
-        const files = await response.json();
-        
-        const container = document.getElementById('files-list');
-        if (!files || files.length === 0) {
-            container.innerHTML = '<p class="placeholder">No uploaded files</p>';
-            return;
-        }
-        
-        container.innerHTML = files.map(file => \`
-            <div class="file-item">
-                <span>\${file.filename || file.file_id}</span>
-                <button onclick="deleteFile('\${file.file_id}')" class="btn-danger">🗑️</button>
-            </div>
-        \`).join('');
-    } catch (error) {
-        console.error('Failed to load files:', error);
-    }
-}
-
-function showCreateProfileModal() {
-    document.getElementById('create-profile-modal').classList.add('active');
-    if (availableProviders.length === 0) loadProviders();
-}
-
-function closeCreateProfileModal() {
-    document.getElementById('create-profile-modal').classList.remove('active');
-    document.getElementById('create-profile-form').reset();
-}
-
-async function loadProviderModels() {
-    const provider = document.getElementById('profile-provider').value;
-    if (!provider) return;
-    
-    try {
-        const response = await fetch(\`/api/config/providers/\${provider}/models\`);
-        const models = await response.json();
-        
-        const modelSelect = document.getElementById('profile-model');
-        modelSelect.innerHTML = models.map(m => \`<option value="\${m}">\${m}</option>\`).join('');
-    } catch (error) {
-        console.error('Failed to load models:', error);
-    }
-}
-
-async function createLLMProfile(event) {
-    event.preventDefault();
-    
-    const profileData = {
-        profile_name: document.getElementById('profile-name').value,
-        provider_name: document.getElementById('profile-provider').value,
-        model_name: document.getElementById('profile-model').value,
-        api_endpoint: document.getElementById('profile-endpoint').value || undefined,
-        api_key: document.getElementById('profile-api-key').value || undefined
-    };
-    
-    try {
-        const response = await fetch('/api/config/llm-profiles', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(profileData)
-        });
-        
-        if (response.ok) {
-            addLog('Profile created successfully', 'success');
-            closeCreateProfileModal();
-            await loadLLMProfiles();
-            await loadLLMProfilesList();
-        } else {
-            const error = await response.text();
-            addLog('Failed to create profile: ' + error, 'error');
-        }
-    } catch (error) {
-        addLog('Error creating profile: ' + error.message, 'error');
-    }
-}
-
-async function deleteProfile(profileName) {
-    if (!confirm(\`Delete profile "\${profileName}"?\`)) return;
-    
-    try {
-        const response = await fetch(\`/api/config/llm-profiles/\${profileName}\`, {
-            method: 'DELETE'
-        });
-        
-        if (response.ok) {
-            addLog('Profile deleted', 'success');
-            await loadLLMProfiles();
-            await loadLLMProfilesList();
-        } else {
-            throw new Error(await response.text());
-        }
-    } catch (error) {
-        addLog('Delete failed: ' + error.message, 'error');
-    }
-}
-
-// ============= UI HELPERS =============
-function updateStatus(state, text) {
-    const indicator = document.getElementById('status-indicator');
-    const statusText = document.getElementById('status-text');
-    indicator.className = 'status-indicator ' + state;
-    statusText.textContent = text;
-}
-
-function addLog(message, type = 'info') {
-    const logContainer = document.getElementById('activity-log');
-    const entry = document.createElement('div');
-    entry.className = 'log-entry ' + type;
-    
-    const timestamp = new Date().toLocaleTimeString();
-    entry.innerHTML = \`<span class="log-timestamp">\${timestamp}</span>\${message}\`;
-    
-    logContainer.appendChild(entry);
-    logContainer.scrollTop = logContainer.scrollHeight;
-}
-
-// Keyboard shortcuts
-document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key === 'Enter') {
-        const activeTab = document.querySelector('.tab-content.active');
-        if (activeTab && activeTab.id === 'tab-tasks') {
-            submitTask();
-        }
-    }
-});
-
-JSEOF
-
-# BACKEND INTEGRATION: Add web UI routes to FastAPI
-RUN cat > $HOME/app/web_ui_routes.py <<'EOF'
-"""
-VibeSurf Web UI Routes - Serve standalone web interface
-"""
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
-from pathlib import Path
-import os
-
-def setup_web_ui_routes(app: FastAPI):
-    """Setup routes to serve web UI"""
-    
-    web_ui_dir = Path(__file__).parent / "web_ui"
-    
-    if not web_ui_dir.exists():
-        print("⚠️ Web UI directory not found, skipping web UI setup")
-        return
-    
-    # Mount static files
-    app.mount("/web_ui", StaticFiles(directory=str(web_ui_dir)), name="web_ui")
-    
-    # Root redirect to web UI
-    @app.get("/", include_in_schema=False)
-    async def root():
-        return RedirectResponse(url="/web_ui/index.html")
-    
-    print("✅ Web UI routes configured")
-    print("   - Access UI at: http://localhost:7860/")
-    print("   - API docs at: http://localhost:7860/docs")
-
+# CONFIGURATION: Create default .env file
+RUN cp .env.example .env
+
+# VNC DIRECTORY: Create directory for VNC files
+RUN mkdir -p $HOME/.vnc && chmod 700 $HOME/.vnc
+
+# DESKTOP SHORTCUT: Create desktop shortcut for VibeSurf
+RUN cat > $HOME/Desktop/vibesurf.desktop <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=VibeSurf
+Comment=Launch VibeSurf with Chrome Extension
+Exec=google-chrome --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --load-extension=/home/user/app/vibe_surf/chrome_extension --user-data-dir=/home/user/app/data/profiles/default http://localhost:9335
+Icon=/home/user/app/vibe_surf/chrome_extension/icons/logo.png
+Terminal=false
+Categories=Network;WebBrowser;
 EOF
 
-# PATCH BACKEND: Integrate web UI into main.py
-RUN cat > $HOME/app/patch_backend.py <<'EOF'
-"""
-Patch main.py to add web UI routes
-"""
-from pathlib import Path
-import re
+RUN chmod +x $HOME/Desktop/vibesurf.desktop
 
-main_path = Path("vibe_surf/backend/main.py")
-content = main_path.read_text()
-
-# Check if already patched
-if "web_ui_routes" in content:
-    print("✅ Backend already patched")
-    exit(0)
-
-# Find FastAPI app creation
-app_match = re.search(r'app = FastAPI\([^)]*\)', content, re.DOTALL)
-if not app_match:
-    print("❌ Could not find FastAPI app creation")
-    exit(1)
-
-# Insert web UI setup after app creation
-insert_pos = app_match.end()
-next_line = content.find('\n', insert_pos)
-
-web_ui_code = """
-
-# Setup Web UI
-try:
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from web_ui_routes import setup_web_ui_routes
-    setup_web_ui_routes(app)
-except Exception as e:
-    print(f"⚠️ Web UI setup failed: {e}")
-    print("API endpoints still available at /docs")
-"""
-
-content = content[:next_line] + web_ui_code + content[next_line:]
-main_path.write_text(content)
-print("✅ Backend patched successfully")
-EOF
-
-RUN /home/user/.venv/bin/python patch_backend.py
-
-# STARTUP SCRIPT: Comprehensive startup with web UI support
-RUN cat > $HOME/app/start.sh <<'EOF'
+# COMPREHENSIVE STARTUP SCRIPT: Manage all services
+RUN cat > $HOME/app/start_ui.sh <<'EOF'
 #!/bin/bash
 set -e
 
@@ -1846,80 +157,325 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-log "=== VibeSurf Web - HuggingFace Spaces Startup ==="
+log "=== VibeSurf UI - HuggingFace Spaces Startup ==="
+log "Initializing VNC-based browser UI environment..."
 
-# Initialize services
-cleanup() {
-    pkill chromium || true
-    pkill dbus-daemon || true
-    pkill Xvfb || true
-    sleep 1
-}
+# DYNAMIC SECRET VALIDATION
+api_keys=("OPENAI_API_KEY" "ANTHROPIC_API_KEY" "GOOGLE_API_KEY" "AZURE_OPENAI_API_KEY" "DEEPSEEK_API_KEY" "MISTRAL_API_KEY")
+found_key=false
+for var in "${api_keys[@]}"; do
+    if [ -n "${!var}" ]; then
+        log "✅ Detected API key: $var"
+        found_key=true
+        export "$var=${!var}"
+    fi
+done
 
-start_xvfb() {
-    log "Starting Xvfb..."
-    Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
-    export DISPLAY=:99
-    sleep 2
-}
-
-init_dbus() {
-    log "Initializing DBus..."
-    dbus-daemon --session --fork || true
-    sleep 1
-}
-
-# Environment setup
-if [ -n "$SPACE_HOST" ]; then
-    export API_BASE_URL="https://$SPACE_HOST"
-    log "Using HF Spaces URL: $API_BASE_URL"
-elif [ -n "$HF_SPACE_HOST" ]; then
-    export API_BASE_URL="https://$HF_SPACE_HOST"
-    log "Using HF Spaces URL: $API_BASE_URL"
-else
-    export API_BASE_URL="http://localhost:7860"
-    log "Using local URL: $API_BASE_URL"
+if [ "$found_key" = false ]; then
+    log "WARNING: No API keys found. Please set at least one in HF Spaces secrets."
 fi
 
-cleanup
-start_xvfb
-init_dbus
+# HF SPACES URL DETECTION
+if [ -n "$SPACE_HOST" ]; then
+    export API_BASE_URL="https://$SPACE_HOST"
+elif [ -n "$HF_SPACE_HOST" ]; then
+    export API_BASE_URL="https://$HF_SPACE_HOST"
+else
+    export API_BASE_URL="http://localhost:9335"
+fi
+log "API Base URL: $API_BASE_URL"
 
-# BROWSER CONFIGURATION: Set browser paths for VibeSurf
-export BROWSER_EXECUTION_PATH=/usr/bin/chromium
-export BROWSER_USER_DATA=$HOME/app/data/profiles
-export VIBESURF_WORKSPACE=$HOME/app/data/workspace
+# DATABASE AND WORKSPACE CONFIGURATION
 export VIBESURF_DATABASE_URL="sqlite+aiosqlite:///$HOME/app/data/database/vibesurf.db"
+export VIBESURF_WORKSPACE="$HOME/app/data/workspace"
+export BROWSER_EXECUTION_PATH="/usr/bin/google-chrome"
+export BROWSER_USER_DATA="$HOME/app/data/profiles"
+export CHROME_DEBUGGING_PORT="9222"
+export BROWSER_USE_CDP_URL="http://127.0.0.1:9222"
 
-log "Browser configuration:"
-log "  - Execution path: $BROWSER_EXECUTION_PATH"
-log "  - User data: $BROWSER_USER_DATA"
-log "  - Workspace: $VIBESURF_WORKSPACE"
-log "  - Database: $VIBESURF_DATABASE_URL"
+log "Configuration:"
+log "- Database: $VIBESURF_DATABASE_URL"
+log "- Workspace: $VIBESURF_WORKSPACE"
+log "- Chrome: $BROWSER_EXECUTION_PATH"
+log "- Chrome Debug Port: $CHROME_DEBUGGING_PORT"
 
-log "Starting VibeSurf with Web UI on 0.0.0.0:7860..."
-log "Endpoints:"
-log "  - / (Web UI)"
-log "  - /docs (API Documentation)"
-log "  - /api/* (API Endpoints)"
+# CLEANUP FUNCTION
+cleanup() {
+    log "Cleaning up processes..."
+    pkill -f vncserver || true
+    pkill -f websockify || true
+    pkill -f uvicorn || true
+    pkill -f google-chrome || true
+}
 
+trap cleanup EXIT
+
+# SET USER ENVIRONMENT VARIABLE (required by VNC)
+export USER=user
+export HOME=/home/user
+
+# START XVFB (Virtual Framebuffer with RANDR extension)
+log "Starting Xvfb with RANDR extension on :1..."
+Xvfb :1 -screen 0 ${VNC_RESOLUTION}x${VNC_COL_DEPTH} +extension RANDR -ac &
+XVFB_PID=$!
+export DISPLAY=:1
+sleep 3
+
+# VERIFY XVFB IS RUNNING
+if ! kill -0 $XVFB_PID 2>/dev/null; then
+    log "ERROR: Xvfb failed to start"
+    exit 1
+fi
+log "✅ Xvfb started with PID: $XVFB_PID"
+
+# START X11VNC (VNC server that connects to existing X display)
+log "Starting x11vnc on display :1 (port 5901) with no password..."
+
+x11vnc -display :1 \
+    -rfbport 5901 \
+    -nopw \
+    -forever \
+    -shared \
+    -bg \
+    -o $HOME/app/logs/x11vnc.log
+
+sleep 3
+
+# VERIFY X11VNC IS RUNNING
+if ! pgrep -x "x11vnc" > /dev/null; then
+    log "ERROR: x11vnc process not found after startup"
+    log "x11vnc startup log:"
+    cat $HOME/app/logs/x11vnc.log
+    exit 1
+fi
+log "✅ x11vnc started successfully"
+
+# START XFCE DESKTOP
+log "Starting XFCE desktop environment..."
+startxfce4 &
+sleep 5
+log "✅ XFCE desktop started"
+
+# UPDATE VIBESURF EXTENSION BACKEND URL
+log "Configuring VibeSurf extension backend URL..."
+CHROME_EXTENSION_PATH="/home/user/app/vibe_surf/chrome_extension"
+CONFIG_JS="$CHROME_EXTENSION_PATH/config.js"
+
+if [ -f "$CONFIG_JS" ]; then
+    # Update BACKEND_URL in config.js to point to localhost:9335
+    sed -i "s|BACKEND_URL:.*|BACKEND_URL: 'http://127.0.0.1:9335',|g" "$CONFIG_JS"
+    log "✅ Extension configured to connect to http://127.0.0.1:9335"
+else
+    log "WARNING: Extension config.js not found at $CONFIG_JS"
+fi
+
+# START GOOGLE CHROME WITH VIBESURF EXTENSION AND DEBUGGING PORT
+log "Starting Chrome with VibeSurf extension and remote debugging..."
+google-chrome \
+    --remote-debugging-port=9222 \
+    --remote-debugging-address=127.0.0.1 \
+    --no-first-run \
+    --disable-infobars \
+    --no-default-browser-check \
+    --window-size=1920,1080 \
+    --disable-gpu \
+    --disable-software-rasterizer \
+    --disable-dev-shm-usage \
+    --no-sandbox \
+    --disable-setuid-sandbox \
+    --disable-accelerated-2d-canvas \
+    --disable-gl-drawing-for-tests \
+    --disable-features=VizDisplayCompositor \
+    --load-extension="$CHROME_EXTENSION_PATH" \
+    --user-data-dir="/home/user/app/data/profiles/default" \
+    about:blank > /dev/null 2>&1 &
+CHROME_PID=$!
+sleep 5
+
+# Verify Chrome debugging port is accessible
+log "Verifying Chrome debugging port..."
+for i in {1..10}; do
+    if curl -s http://127.0.0.1:9222/json/version > /dev/null 2>&1; then
+        log "✅ Chrome debugging port (9222) is accessible"
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        log "WARNING: Chrome debugging port not accessible after 10 attempts"
+    fi
+    sleep 1
+done
+
+log "✅ Chrome started with PID: $CHROME_PID"
+
+# START NOVNC (WEB-BASED VNC CLIENT)
+log "Starting noVNC web interface on port 7860..."
+websockify --web=/usr/share/novnc 7860 localhost:5901 > $HOME/app/logs/novnc.log 2>&1 &
+NOVNC_PID=$!
+sleep 3
+
+# VERIFY NOVNC IS RUNNING
+if ! kill -0 $NOVNC_PID 2>/dev/null; then
+    log "ERROR: noVNC failed to start"
+    cat $HOME/app/logs/novnc.log
+    exit 1
+fi
+log "✅ noVNC started successfully (PID: $NOVNC_PID)"
+
+# START VIBESURF BACKEND API
+log "Starting VibeSurf backend on localhost:9335..."
 source $HOME/.venv/bin/activate
 cd $HOME/app
 
-/home/user/.venv/bin/uvicorn vibe_surf.backend.main:app \
-    --host 0.0.0.0 \
-    --port 7860 \
-    --log-level info
+# Function to start backend with resource limits
+start_backend() {
+    $HOME/.venv/bin/uvicorn vibe_surf.backend.main:app \
+        --host 0.0.0.0 \
+        --port 9335 \
+        --log-level info \
+        --timeout-keep-alive 120 \
+        --limit-concurrency 50 \
+        --backlog 100 \
+        >> $HOME/app/logs/backend.log 2>&1 &
+    echo $!
+}
+
+BACKEND_PID=$(start_backend)
+sleep 5
+
+# VERIFY BACKEND IS RUNNING
+if ! kill -0 $BACKEND_PID 2>/dev/null; then
+    log "ERROR: VibeSurf backend failed to start"
+    cat $HOME/app/logs/backend.log
+    exit 1
+fi
+
+# CHECK BACKEND HEALTH
+for i in {1..10}; do
+    if curl -s http://localhost:9335/ > /dev/null; then
+        log "✅ VibeSurf backend is healthy (PID: $BACKEND_PID)"
+        # Verify backend is accessible from different interfaces
+        log "Verifying backend connectivity..."
+        curl -s http://127.0.0.1:9335/health > /dev/null && log "  ✅ Accessible via 127.0.0.1:9335"
+        curl -s http://localhost:9335/health > /dev/null && log "  ✅ Accessible via localhost:9335"
+        log "  ✅ Extension should be able to connect"
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        log "ERROR: Backend health check failed"
+        log "Last 50 lines of backend log:"
+        tail -50 $HOME/app/logs/backend.log
+        exit 1
+    fi
+    sleep 2
+done
+
+log ""
+log "========================================="
+log "🎉 VibeSurf UI is ready!"
+log "========================================="
+log ""
+log "📺 Access the browser UI:"
+log "   https://YOUR_SPACE_URL (opens noVNC web interface)"
+log ""
+log "🔓 No password required - just click 'Connect'!"
+log ""
+log "🚀 What's running:"
+log "   - Chrome browser with VibeSurf extension loaded (GPU disabled for stability)"
+log "   - Chrome debugging port: 9222 (for backend connection)"
+log "   - Extension configured to connect to http://127.0.0.1:9335"
+log "   - Backend API running on http://localhost:9335 (with resource limits)"
+log "   - Automatic restart with exponential backoff on failures"
+log "   - All services connected and ready!"
+log ""
+log "💡 Usage:"
+log "   1. Open your Space URL in browser"
+log "   2. Click 'Connect' button (no password needed)"
+log "   3. You'll see XFCE desktop with Chrome already open"
+log "   4. Click the VibeSurf extension icon (puzzle piece in toolbar)"
+log "   5. Extension should show 'Connected' status"
+log "   6. Start automating by entering tasks in the side panel"
+log ""
+log "🔧 Troubleshooting:"
+log "   - If extension shows 'Disconnected': Refresh Chrome page"
+log "   - If extension not visible: Check Chrome extensions (chrome://extensions)"
+log "   - Backend API docs: http://localhost:9335/docs (inside the VNC session)"
+log ""
+log "📊 Backend API: http://localhost:9335"
+log "📖 API Docs: http://localhost:9335/docs"
+log ""
+log "========================================="
+
+# Keep container running and monitor services
+BACKEND_RESTART_COUNT=0
+BACKEND_RESTART_DELAY=5
+MAX_RESTART_DELAY=300
+NOVNC_RESTART_COUNT=0
+
+while true; do
+    # Monitor noVNC
+    if ! kill -0 $NOVNC_PID 2>/dev/null; then
+        NOVNC_RESTART_COUNT=$((NOVNC_RESTART_COUNT + 1))
+        log "ERROR: noVNC process died (restart #$NOVNC_RESTART_COUNT), restarting..."
+        websockify --web=/usr/share/novnc 7860 localhost:5901 > $HOME/app/logs/novnc.log 2>&1 &
+        NOVNC_PID=$!
+    fi
+    
+    # Monitor backend with exponential backoff
+    if ! kill -0 $BACKEND_PID 2>/dev/null; then
+        BACKEND_RESTART_COUNT=$((BACKEND_RESTART_COUNT + 1))
+        log "ERROR: Backend process died (restart #$BACKEND_RESTART_COUNT)"
+        
+        # Capture last 100 lines of backend log for debugging
+        log "Last 100 lines of backend log:"
+        tail -100 $HOME/app/logs/backend.log
+        
+        # Rotate log if it's getting too large (>10MB)
+        log_size=$(stat -f%z "$HOME/app/logs/backend.log" 2>/dev/null || stat -c%s "$HOME/app/logs/backend.log" 2>/dev/null || echo 0)
+        if [ "$log_size" -gt 10485760 ]; then
+            mv $HOME/app/logs/backend.log $HOME/app/logs/backend.log.old
+            log "Rotated backend log (size: $log_size bytes)"
+        fi
+        
+        # Exponential backoff (5s, 10s, 20s, 40s, ..., max 300s)
+        if [ $BACKEND_RESTART_COUNT -gt 10 ]; then
+            log "WARNING: Backend has crashed $BACKEND_RESTART_COUNT times. This may indicate a serious issue."
+        fi
+        
+        log "Waiting ${BACKEND_RESTART_DELAY}s before restarting backend..."
+        sleep $BACKEND_RESTART_DELAY
+        
+        # Increase delay for next restart (exponential backoff)
+        BACKEND_RESTART_DELAY=$((BACKEND_RESTART_DELAY * 2))
+        if [ $BACKEND_RESTART_DELAY -gt $MAX_RESTART_DELAY ]; then
+            BACKEND_RESTART_DELAY=$MAX_RESTART_DELAY
+        fi
+        
+        log "Restarting backend..."
+        BACKEND_PID=$(start_backend)
+        
+        # Wait and verify backend started
+        sleep 5
+        if kill -0 $BACKEND_PID 2>/dev/null; then
+            log "✅ Backend restarted successfully (PID: $BACKEND_PID)"
+            # Reset delay on successful restart
+            BACKEND_RESTART_DELAY=5
+        else
+            log "❌ Backend failed to restart"
+        fi
+    fi
+    
+    sleep 30
+done
 EOF
 
-RUN chmod +x $HOME/app/start.sh
+RUN chmod +x $HOME/app/start_ui.sh
 
-# HF SPACES PORT: Expose port for external access
+# HF SPACES PORT: Expose noVNC web interface port
 EXPOSE 7860
 
-# HEALTH MONITORING: Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:7860/health || exit 1
+# HEALTH MONITORING: Check if noVNC is accessible
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+    CMD curl -f http://localhost:7860/ || exit 1
 
-# STARTUP
-CMD ["./start.sh"]
+# STARTUP: Launch comprehensive UI startup script
+CMD ["./start_ui.sh"]
